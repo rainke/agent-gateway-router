@@ -41,6 +41,9 @@ type StreamState struct {
 	ThinkingBlockStarted bool
 	// 当前仍打开的 content block
 	OpenBlocks map[int]bool
+	// Token 使用统计（从上游 usage chunk 中提取）
+	InputTokens  int
+	OutputTokens int
 }
 
 type toolCallAccumulator struct {
@@ -198,6 +201,18 @@ func (t *OpenAIToCustomTransformer) transformToClaudeStreamChunk(ctx context.Con
 	var data map[string]any
 	if err := json.Unmarshal(chunk, &data); err != nil {
 		return chunk, nil
+	}
+
+	// 提取 usage 信息（OpenAI 在最后一个 chunk 中返回 usage）
+	if usage, ok := data["usage"].(map[string]any); ok {
+		if state, _ := ctx.Value(StreamStateKey).(*StreamState); state != nil {
+			if pt, ok := usage["prompt_tokens"].(float64); ok {
+				state.InputTokens = int(pt)
+			}
+			if ct, ok := usage["completion_tokens"].(float64); ok {
+				state.OutputTokens = int(ct)
+			}
+		}
 	}
 
 	choices, ok := data["choices"].([]any)
@@ -536,6 +551,12 @@ func (t *OpenAIToCustomTransformer) transformClaudeRequest(body []byte, upstream
 	}
 	if stream, ok := req["stream"]; ok {
 		transformed["stream"] = stream
+		// 如果是流式请求，添加 stream_options 以获取 usage 统计
+		if streamBool, isBool := stream.(bool); isBool && streamBool {
+			transformed["stream_options"] = map[string]any{
+				"include_usage": true,
+			}
+		}
 	}
 	if temp, ok := req["temperature"]; ok {
 		transformed["temperature"] = temp
