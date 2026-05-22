@@ -171,7 +171,7 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	}
 
 	// 创建流式状态追踪
-	state := &transformer.StreamState{BlockIndex: 0}
+	state := &transformer.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
 	ctx = context.WithValue(ctx, transformer.StreamStateKey, state)
 
 	// 发送 message_start 事件
@@ -194,19 +194,8 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", msgStartJSON)
 	flusher.Flush()
 
-	// 发送 content_block_start 事件（text block，index 0）
-	blockStart := map[string]any{
-		"type":          "content_block_start",
-		"index":         0,
-		"content_block": map[string]any{"type": "text", "text": ""},
-	}
-	blockStartJSON, _ := json.Marshal(blockStart)
-	fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n", blockStartJSON)
-	flusher.Flush()
-
 	// 追踪 stop reason
 	stopReason := "end_turn"
-	textBlockStopped := false
 
 	// 读取上游流式响应并转换
 	scanner := bufio.NewScanner(resp.Body)
@@ -243,18 +232,6 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 							stopReason = "max_tokens"
 						case "stop":
 							stopReason = "end_turn"
-						}
-					}
-
-					// 检查是否有 tool_calls delta，如果有需要先关闭 text block
-					if delta, ok := choice["delta"].(map[string]any); ok {
-						if _, hasTC := delta["tool_calls"]; hasTC && !textBlockStopped {
-							// 关闭 text block
-							blockStop := map[string]any{"type": "content_block_stop", "index": 0}
-							blockStopJSON, _ := json.Marshal(blockStop)
-							fmt.Fprintf(w, "event: content_block_stop\ndata: %s\n\n", blockStopJSON)
-							flusher.Flush()
-							textBlockStopped = true
 						}
 					}
 				}
@@ -318,21 +295,17 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 		slog.Error("读取流式响应失败", "error", err)
 	}
 
-	// 如果 text block 还没关闭，关闭它
-	if !textBlockStopped {
-		blockStop := map[string]any{"type": "content_block_stop", "index": 0}
-		blockStopJSON, _ := json.Marshal(blockStop)
-		fmt.Fprintf(w, "event: content_block_stop\ndata: %s\n\n", blockStopJSON)
-		flusher.Flush()
-	}
-
-	// 如果有 tool_use blocks，发送它们的 content_block_stop
-	if state.BlockIndex > 0 {
-		for i := 1; i <= state.BlockIndex; i++ {
+	// 关闭仍打开的 content blocks
+	if state.BlockIndex >= 0 {
+		for i := 0; i <= state.BlockIndex; i++ {
+			if !state.OpenBlocks[i] {
+				continue
+			}
 			blockStop := map[string]any{"type": "content_block_stop", "index": i}
 			blockStopJSON, _ := json.Marshal(blockStop)
 			fmt.Fprintf(w, "event: content_block_stop\ndata: %s\n\n", blockStopJSON)
 			flusher.Flush()
+			state.OpenBlocks[i] = false
 		}
 	}
 
