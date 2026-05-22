@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"agr/config"
 	"agr/process"
@@ -145,7 +148,7 @@ func runServer() error {
 	}
 }
 
-// setupLogger 设置日志级别
+// setupLogger 设置日志级别，同时输出到 stdout 和日志文件
 func setupLogger(level string) {
 	var logLevel slog.Level
 	switch level {
@@ -161,8 +164,26 @@ func setupLogger(level string) {
 		logLevel = slog.LevelInfo
 	}
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
-	})
+	// 创建日志目录
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	logDir := filepath.Join(home, ".agr", "logs")
+	os.MkdirAll(logDir, 0755)
+
+	// 按日期命名日志文件
+	logFile := filepath.Join(logDir, time.Now().Format("2006-01-02")+".log")
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		// 打开文件失败，仅输出到 stdout
+		handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
+		slog.SetDefault(slog.New(handler))
+		return
+	}
+
+	// 同时写入 stdout 和日志文件
+	w := io.MultiWriter(os.Stdout, f)
+	handler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(handler))
 }

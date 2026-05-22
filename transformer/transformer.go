@@ -72,6 +72,7 @@ func (c *Chain) TransformStream(ctx context.Context, chunk []byte) ([]byte, erro
 // registry 内置 Transformer 注册表
 var registry = map[string]func() Transformer{
 	"openai-to-custom": func() Transformer { return &OpenAIToCustomTransformer{} },
+	"deepseek":         func() Transformer { return &DeepSeekTransformer{} },
 }
 
 // Get 根据名称获取 Transformer 实例

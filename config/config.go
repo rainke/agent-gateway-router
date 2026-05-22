@@ -34,7 +34,7 @@ type Provider struct {
 
 // Load 加载并校验配置文件
 func Load(configPath string) (*Config, error) {
-	v := viper.New()
+	v := viper.NewWithOptions(viper.KeyDelimiter("::"))
 	v.SetConfigType("toml")
 
 	if configPath != "" {
@@ -134,9 +134,10 @@ func validate(cfg *Config) error {
 
 // IsValidTransformer 检查 Transformer 名称是否在注册表中
 func IsValidTransformer(name string) bool {
-	// 一期内置 Transformer 注册表
+	// 内置 Transformer 注册表
 	registry := map[string]bool{
 		"openai-to-custom": true,
+		"deepseek":         true,
 	}
 	return registry[name]
 }

@@ -451,7 +451,7 @@ func (t *OpenAIToCustomTransformer) convertClaudeMessages(messages []any) []any 
 
 		switch role {
 		case "user":
-			converted = append(converted, t.convertClaudeUserMessage(m))
+			converted = append(converted, t.convertClaudeUserMessage(m)...)
 		case "assistant":
 			converted = append(converted, t.convertClaudeAssistantMessage(m)...)
 		default:
@@ -463,13 +463,13 @@ func (t *OpenAIToCustomTransformer) convertClaudeMessages(messages []any) []any 
 	return converted
 }
 
-// convertClaudeUserMessage 转换 Claude user 消息
-func (t *OpenAIToCustomTransformer) convertClaudeUserMessage(m map[string]any) any {
+// convertClaudeUserMessage 转换 Claude user 消息，返回一条或多条 OpenAI 格式消息
+func (t *OpenAIToCustomTransformer) convertClaudeUserMessage(m map[string]any) []any {
 	content := m["content"]
 
 	switch c := content.(type) {
 	case string:
-		return map[string]any{"role": "user", "content": c}
+		return []any{map[string]any{"role": "user", "content": c}}
 	case []any:
 		// 检查是否包含 tool_result
 		hasToolResult := false
@@ -483,9 +483,7 @@ func (t *OpenAIToCustomTransformer) convertClaudeUserMessage(m map[string]any) a
 		}
 
 		if hasToolResult {
-			// 包含 tool_result，需要拆分为多条消息
-			// 但 OpenAI 格式中 tool 消息是独立的，这里返回 tool 消息
-			// 实际上需要在上层处理，这里先提取 tool_result
+			// 包含 tool_result，拆分为独立的 tool 消息
 			var results []any
 			var textParts []string
 
@@ -510,20 +508,13 @@ func (t *OpenAIToCustomTransformer) convertClaudeUserMessage(m map[string]any) a
 				}
 			}
 
-			// 如果只有 tool_result，返回第一个（多个会在外层处理）
-			if len(textParts) == 0 && len(results) > 0 {
-				if len(results) == 1 {
-					return results[0]
-				}
-				// 多个 tool_result，返回数组标记
-				return results
-			}
-
-			// 混合内容，先返回 text
+			// 如果有文本内容，放在 tool 消息之前
+			var msgs []any
 			if len(textParts) > 0 {
-				return map[string]any{"role": "user", "content": strings.Join(textParts, "")}
+				msgs = append(msgs, map[string]any{"role": "user", "content": strings.Join(textParts, "")})
 			}
-			return results
+			msgs = append(msgs, results...)
+			return msgs
 		}
 
 		// 普通内容数组，提取文本
@@ -537,9 +528,9 @@ func (t *OpenAIToCustomTransformer) convertClaudeUserMessage(m map[string]any) a
 				}
 			}
 		}
-		return map[string]any{"role": "user", "content": strings.Join(textParts, "")}
+		return []any{map[string]any{"role": "user", "content": strings.Join(textParts, "")}}
 	default:
-		return map[string]any{"role": "user", "content": fmt.Sprintf("%v", c)}
+		return []any{map[string]any{"role": "user", "content": fmt.Sprintf("%v", c)}}
 	}
 }
 
