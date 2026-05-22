@@ -210,12 +210,6 @@ func (t *OpenAIToCustomTransformer) transformToClaudeStreamChunk(ctx context.Con
 		return nil, nil
 	}
 
-	// 检查是否是结束 chunk
-	finishReason, _ := choice["finish_reason"].(string)
-	if finishReason == "stop" || finishReason == "tool_calls" || finishReason == "function_call" {
-		return nil, nil
-	}
-
 	delta, ok := choice["delta"].(map[string]any)
 	if !ok {
 		return nil, nil

@@ -219,6 +219,8 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 			break
 		}
 
+		slog.Debug("上游原始 SSE chunk", "data", data)
+
 		// 检查 finish_reason 以确定 stop_reason
 		var rawChunk map[string]any
 		if err := json.Unmarshal([]byte(data), &rawChunk); err == nil {

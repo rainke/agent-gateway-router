@@ -687,6 +687,38 @@ func TestTransformToClaudeStreamChunk_ToolCallArgsDelta(t *testing.T) {
 	}
 }
 
+func TestTransformToClaudeStreamChunk_ToolCallArgsDeltaWithFinishReason(t *testing.T) {
+	tr := &OpenAIToCustomTransformer{}
+	ctx := makeCtx("/v1/messages", "", "claude-3")
+	state := &StreamState{BlockIndex: 1}
+	ctx = context.WithValue(ctx, StreamStateKey, state)
+
+	chunk := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}`
+
+	result, err := tr.TransformStream(ctx, []byte(chunk))
+	if err != nil {
+		t.Fatalf("TransformStream 失败: %v", err)
+	}
+	if result == nil {
+		t.Fatal("带 finish_reason 的最后 arguments chunk 不应被跳过")
+	}
+
+	var events []map[string]any
+	if err := json.Unmarshal(result, &events); err != nil {
+		t.Fatalf("解析事件数组失败: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("期望 1 个事件，实际 %d", len(events))
+	}
+	delta := events[0]["delta"].(map[string]any)
+	if delta["type"] != "input_json_delta" {
+		t.Fatalf("delta.type 应为 input_json_delta，实际 %v", delta["type"])
+	}
+	if delta["partial_json"] != "}" {
+		t.Fatalf("partial_json 应为 }，实际 %q", delta["partial_json"])
+	}
+}
+
 // === Codex 请求转换测试 ===
 
 func TestTransformCodexRequest_StringInput(t *testing.T) {

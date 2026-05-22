@@ -281,6 +281,44 @@ func TestHandleMessages_StreamWithToolCalls(t *testing.T) {
 	}
 }
 
+func TestHandleMessages_StreamWithFinalToolArgsOnFinishChunk(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+
+		chunks := []string{
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Write","arguments":"{\"file_path\":\"/tmp/README.md\""}}]},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}`,
+		}
+
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"write file"}],"max_tokens":100,"stream":true,"tools":[{"name":"Write","description":"write file","input_schema":{"type":"object","properties":{"file_path":{"type":"string"}}}}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessages(w, req)
+
+	respBody := w.Body.String()
+	if !strings.Contains(respBody, `"partial_json":"}"`) {
+		t.Fatalf("响应应包含 finish chunk 上的最后 arguments，实际响应: %s", respBody)
+	}
+	if !strings.Contains(respBody, `"stop_reason":"tool_use"`) {
+		t.Error("stop_reason 应为 tool_use")
+	}
+}
+
 func TestHandleMessages_InvalidBody(t *testing.T) {
 	p := newTestProxy("http://localhost")
 
