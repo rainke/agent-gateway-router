@@ -101,6 +101,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	ctx = context.WithValue(ctx, transformer.UpstreamModelKey, result.Model)
 	ctx = context.WithValue(ctx, transformer.ClientModelKey, clientModel)
 
+	slog.Debug("转换前的请求体", "body", string(body))
+
 	// 执行请求转换
 	transformedBody, err := chain.TransformRequest(ctx, body)
 	if err != nil {

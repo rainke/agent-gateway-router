@@ -848,7 +848,10 @@ func TestConvertClaudeUserMessage_PlainString(t *testing.T) {
 	tr := &OpenAIToCustomTransformer{}
 	msg := map[string]any{"role": "user", "content": "hello"}
 	result := tr.convertClaudeUserMessage(msg)
-	m := result.(map[string]any)
+	if len(result) != 1 {
+		t.Fatalf("应返回 1 条消息，实际 %d", len(result))
+	}
+	m := result[0].(map[string]any)
 	if m["content"] != "hello" {
 		t.Errorf("content 应为 hello")
 	}
@@ -864,10 +867,17 @@ func TestConvertClaudeUserMessage_MixedContent(t *testing.T) {
 		},
 	}
 	result := tr.convertClaudeUserMessage(msg)
-	// 混合内容时返回 text 部分
-	m := result.(map[string]any)
+	// 混合内容时，text 在前，tool 消息在后
+	if len(result) != 2 {
+		t.Fatalf("混合内容应返回 2 条消息，实际 %d", len(result))
+	}
+	m := result[0].(map[string]any)
 	if m["content"] != "before" {
-		t.Errorf("混合内容应返回 text 部分，实际 %v", m["content"])
+		t.Errorf("第一条应为 text 消息，实际 %v", m["content"])
+	}
+	toolMsg := result[1].(map[string]any)
+	if toolMsg["role"] != "tool" {
+		t.Errorf("第二条应为 tool 消息，实际 role=%v", toolMsg["role"])
 	}
 }
 
@@ -881,13 +891,9 @@ func TestConvertClaudeUserMessage_MultipleToolResults(t *testing.T) {
 		},
 	}
 	result := tr.convertClaudeUserMessage(msg)
-	// 多个 tool_result 返回数组
-	results, ok := result.([]any)
-	if !ok {
-		t.Fatalf("多个 tool_result 应返回数组，实际类型 %T", result)
-	}
-	if len(results) != 2 {
-		t.Errorf("应有 2 个 tool 消息，实际 %d", len(results))
+	// 多个 tool_result 返回多条 tool 消息
+	if len(result) != 2 {
+		t.Errorf("应有 2 个 tool 消息，实际 %d", len(result))
 	}
 }
 
