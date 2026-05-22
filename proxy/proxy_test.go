@@ -116,6 +116,75 @@ func TestHandleMessages_NonStream(t *testing.T) {
 	}
 }
 
+func TestHandleMessagesCountTokens(t *testing.T) {
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{
+		"model": "claude-3",
+		"system": "You are concise.",
+		"messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+		"tools": [{"name": "bash", "description": "run bash", "input_schema": {"type": "object"}}]
+	}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，实际 %d，body: %s", w.Code, w.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("count_tokens 不应请求上游")
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应 JSON 解析失败: %v", err)
+	}
+	if resp["input_tokens"].(float64) <= 0 {
+		t.Errorf("input_tokens 应大于 0，实际 %v", resp["input_tokens"])
+	}
+}
+
+func TestHandleMessagesCountTokens_ToolsIncreaseCount(t *testing.T) {
+	base := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`)
+	withTools := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hello"}],"tools":[{"name":"bash","description":"run bash","input_schema":{"type":"object","properties":{"command":{"type":"string"}}}}]}`)
+
+	baseTokens, err := countClaudeMessageTokens(base, "unknown-model")
+	if err != nil {
+		t.Fatalf("base 计数失败: %v", err)
+	}
+	toolTokens, err := countClaudeMessageTokens(withTools, "unknown-model")
+	if err != nil {
+		t.Fatalf("tools 计数失败: %v", err)
+	}
+	if toolTokens <= baseTokens {
+		t.Fatalf("包含 tools 时 token 数应增加，base=%d tools=%d", baseTokens, toolTokens)
+	}
+}
+
+func TestHandleMessagesCountTokens_InvalidBody(t *testing.T) {
+	p := newTestProxy("http://localhost")
+
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("状态码期望 400，实际 %d", w.Code)
+	}
+}
+
 func TestHandleMessages_Stream(t *testing.T) {
 	// 模拟上游返回 SSE 流式响应
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

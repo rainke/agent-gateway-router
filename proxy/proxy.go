@@ -44,6 +44,39 @@ func (p *Proxy) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	p.handleProxy(w, r, "/v1/messages")
 }
 
+// HandleMessagesCountTokens 处理 /v1/messages/count_tokens 请求（Claude Code）
+func (p *Proxy) HandleMessagesCountTokens(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		p.writeError(w, http.StatusBadRequest, "读取请求体失败: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+
+	clientModel, err := extractModel(body, "/v1/messages/count_tokens")
+	if err != nil {
+		p.writeError(w, http.StatusBadRequest, "提取模型名失败: "+err.Error())
+		return
+	}
+
+	result, err := p.router.Route(clientModel)
+	if err != nil {
+		p.writeError(w, http.StatusBadGateway, "路由失败: "+err.Error())
+		return
+	}
+
+	inputTokens, err := countClaudeMessageTokens(body, result.Model)
+	if err != nil {
+		p.writeError(w, http.StatusBadRequest, "计算 token 失败: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"input_tokens": inputTokens,
+	})
+}
+
 // HandleResponses 处理 /v1/responses 请求（Codex）
 func (p *Proxy) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	p.handleProxy(w, r, "/v1/responses")

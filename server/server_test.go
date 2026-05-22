@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,24 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	errObj := body["error"].(map[string]any)
 	if errObj["code"] != "feature_not_implemented" {
 		t.Errorf("错误码不匹配")
+	}
+
+	// 测试 Claude count_tokens 端点
+	countBody := `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`
+	resp3, err := http.Post("http://localhost:19877/v1/messages/count_tokens", "application/json", strings.NewReader(countBody))
+	if err != nil {
+		t.Fatalf("count_tokens 请求失败: %v", err)
+	}
+	defer resp3.Body.Close()
+
+	if resp3.StatusCode != 200 {
+		t.Errorf("count_tokens 状态码期望 200，实际 %d", resp3.StatusCode)
+	}
+
+	var countResp map[string]any
+	json.NewDecoder(resp3.Body).Decode(&countResp)
+	if countResp["input_tokens"].(float64) <= 0 {
+		t.Errorf("input_tokens 应大于 0，实际 %v", countResp["input_tokens"])
 	}
 
 	// 优雅停机
