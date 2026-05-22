@@ -27,6 +27,7 @@ func New(cfg *config.Config) *Server {
 
 	// 一期核心端点
 	mux.HandleFunc("/v1/messages", p.HandleMessages)
+	mux.HandleFunc("/v1/messages/count_tokens", p.HandleMessagesCountTokens)
 	mux.HandleFunc("/v1/responses", p.HandleResponses)
 
 	// 二期 Ollama 端点，一期返回 501
