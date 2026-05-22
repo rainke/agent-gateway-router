@@ -352,7 +352,8 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 			"stop_sequence": nil,
 		},
 		"usage": map[string]any{
-			"output_tokens": 0,
+			"input_tokens":  state.InputTokens,
+			"output_tokens": state.OutputTokens,
 		},
 	}
 	msgDeltaJSON, _ := json.Marshal(msgDelta)
