@@ -181,6 +181,56 @@ func TestHandleMessages_Stream(t *testing.T) {
 	}
 }
 
+func TestHandleMessages_StreamWithReasoningContent(t *testing.T) {
+	// 模拟 DeepSeek 返回 reasoning_content + content 的 SSE 流式响应
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+
+		chunks := []string{
+			`{"choices":[{"index":0,"delta":{"reasoning_content":"I should inspect the code."},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		}
+
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"stream":true}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessages(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("状态码期望 200，实际 %d", w.Code)
+	}
+
+	respBody := w.Body.String()
+	if !strings.Contains(respBody, `"type":"thinking"`) {
+		t.Error("响应应包含 thinking content block")
+	}
+	if !strings.Contains(respBody, `"type":"thinking_delta"`) {
+		t.Error("响应应包含 thinking_delta")
+	}
+	if !strings.Contains(respBody, `"thinking":"I should inspect the code."`) {
+		t.Error("响应应包含 reasoning_content 转换后的 thinking")
+	}
+	if !strings.Contains(respBody, `"type":"text_delta"`) || !strings.Contains(respBody, `"text":"Done"`) {
+		t.Error("响应应包含后续文本")
+	}
+}
+
 func TestHandleMessages_StreamWithToolCalls(t *testing.T) {
 	// 模拟上游返回带 tool_calls 的流式响应
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -461,6 +461,85 @@ func TestTransformToClaudeStreamChunk_TextDelta(t *testing.T) {
 	}
 }
 
+func TestTransformToClaudeStreamChunk_ReasoningContentDelta(t *testing.T) {
+	tr := &OpenAIToCustomTransformer{}
+	ctx := makeCtx("/v1/messages", "", "claude-3")
+	state := &StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
+	ctx = context.WithValue(ctx, StreamStateKey, state)
+
+	chunk := `{"choices":[{"index":0,"delta":{"reasoning_content":"I should inspect the code."},"finish_reason":null}]}`
+
+	result, err := tr.TransformStream(ctx, []byte(chunk))
+	if err != nil {
+		t.Fatalf("TransformStream 失败: %v", err)
+	}
+	if result == nil {
+		t.Fatal("reasoning_content chunk 不应返回 nil")
+	}
+
+	var events []map[string]any
+	if err := json.Unmarshal(result, &events); err != nil {
+		t.Fatalf("解析事件数组失败: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("期望 2 个事件，实际 %d", len(events))
+	}
+
+	start := events[0]
+	if start["type"] != "content_block_start" {
+		t.Fatalf("第一个事件应为 content_block_start，实际 %v", start["type"])
+	}
+	block := start["content_block"].(map[string]any)
+	if block["type"] != "thinking" {
+		t.Fatalf("content_block.type 应为 thinking，实际 %v", block["type"])
+	}
+
+	delta := events[1]["delta"].(map[string]any)
+	if delta["type"] != "thinking_delta" {
+		t.Fatalf("delta.type 应为 thinking_delta，实际 %v", delta["type"])
+	}
+	if delta["thinking"] != "I should inspect the code." {
+		t.Fatalf("thinking 内容不符合预期，实际 %v", delta["thinking"])
+	}
+}
+
+func TestTransformToClaudeStreamChunk_TextAfterReasoningStartsTextBlock(t *testing.T) {
+	tr := &OpenAIToCustomTransformer{}
+	ctx := makeCtx("/v1/messages", "", "claude-3")
+	state := &StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
+	ctx = context.WithValue(ctx, StreamStateKey, state)
+
+	reasoningChunk := `{"choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}`
+	if _, err := tr.TransformStream(ctx, []byte(reasoningChunk)); err != nil {
+		t.Fatalf("TransformStream reasoning 失败: %v", err)
+	}
+
+	textChunk := `{"choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}`
+	result, err := tr.TransformStream(ctx, []byte(textChunk))
+	if err != nil {
+		t.Fatalf("TransformStream text 失败: %v", err)
+	}
+
+	var events []map[string]any
+	if err := json.Unmarshal(result, &events); err != nil {
+		t.Fatalf("解析事件数组失败: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("期望 stop thinking、start text、text delta 三个事件，实际 %d", len(events))
+	}
+	if events[0]["type"] != "content_block_stop" {
+		t.Fatalf("第一个事件应停止 thinking block，实际 %v", events[0]["type"])
+	}
+	block := events[1]["content_block"].(map[string]any)
+	if block["type"] != "text" {
+		t.Fatalf("第二个事件应启动 text block，实际 %v", block["type"])
+	}
+	delta := events[2]["delta"].(map[string]any)
+	if delta["type"] != "text_delta" || delta["text"] != "answer" {
+		t.Fatalf("第三个事件应为 text_delta answer，实际 %v", delta)
+	}
+}
+
 func TestTransformToClaudeStreamChunk_EmptyContent(t *testing.T) {
 	tr := &OpenAIToCustomTransformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")

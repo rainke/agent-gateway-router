@@ -29,10 +29,18 @@ const (
 type StreamState struct {
 	// 当前正在组装的 tool calls
 	ToolCalls []toolCallAccumulator
-	// 当前 content block 索引（text 占 0，tool_use 从 1 开始）
+	// 当前 content block 索引
 	BlockIndex int
 	// 是否已经输出过 text content
 	HasTextContent bool
+	// 当前 text/thinking block 索引
+	TextBlockIndex     int
+	ThinkingBlockIndex int
+	// text/thinking block 是否已经开始
+	TextBlockStarted     bool
+	ThinkingBlockStarted bool
+	// 当前仍打开的 content block
+	OpenBlocks map[int]bool
 }
 
 type toolCallAccumulator struct {
@@ -218,6 +226,11 @@ func (t *OpenAIToCustomTransformer) transformToClaudeStreamChunk(ctx context.Con
 		return t.handleToolCallDelta(ctx, toolCallsRaw, clientModel)
 	}
 
+	// 处理 DeepSeek reasoning_content，转换为 Anthropic thinking delta
+	if reasoningContent, _ := delta["reasoning_content"].(string); reasoningContent != "" {
+		return t.handleReasoningContentDelta(ctx, reasoningContent)
+	}
+
 	// 处理普通文本 content
 	content, _ := delta["content"].(string)
 	if content == "" {
@@ -233,7 +246,111 @@ func (t *OpenAIToCustomTransformer) transformToClaudeStreamChunk(ctx context.Con
 		},
 	}
 
+	if state, _ := ctx.Value(StreamStateKey).(*StreamState); state != nil {
+		events := t.ensureTextBlockStarted(state)
+		events = append(events, eventWithIndex(event, state.TextBlockIndex))
+		return json.Marshal(events)
+	}
+
 	return json.Marshal(event)
+}
+
+func (t *OpenAIToCustomTransformer) handleReasoningContentDelta(ctx context.Context, reasoningContent string) ([]byte, error) {
+	event := map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{
+			"type":     "thinking_delta",
+			"thinking": reasoningContent,
+		},
+	}
+
+	state, _ := ctx.Value(StreamStateKey).(*StreamState)
+	if state == nil {
+		return json.Marshal(event)
+	}
+
+	events := t.ensureThinkingBlockStarted(state)
+	events = append(events, eventWithIndex(event, state.ThinkingBlockIndex))
+	return json.Marshal(events)
+}
+
+func (t *OpenAIToCustomTransformer) ensureTextBlockStarted(state *StreamState) []map[string]any {
+	var events []map[string]any
+	events = append(events, stopOpenThinkingBlock(state)...)
+	if state.TextBlockStarted {
+		return events
+	}
+
+	state.TextBlockIndex = allocateContentBlock(state)
+	state.TextBlockStarted = true
+	events = append(events, map[string]any{
+		"type":          "content_block_start",
+		"index":         state.TextBlockIndex,
+		"content_block": map[string]any{"type": "text", "text": ""},
+	})
+	return events
+}
+
+func (t *OpenAIToCustomTransformer) ensureThinkingBlockStarted(state *StreamState) []map[string]any {
+	var events []map[string]any
+	events = append(events, stopOpenTextBlock(state)...)
+	if state.ThinkingBlockStarted {
+		return events
+	}
+
+	state.ThinkingBlockIndex = allocateContentBlock(state)
+	state.ThinkingBlockStarted = true
+	events = append(events, map[string]any{
+		"type":  "content_block_start",
+		"index": state.ThinkingBlockIndex,
+		"content_block": map[string]any{
+			"type":     "thinking",
+			"thinking": "",
+		},
+	})
+	return events
+}
+
+func allocateContentBlock(state *StreamState) int {
+	state.BlockIndex++
+	ensureOpenBlocks(state)
+	state.OpenBlocks[state.BlockIndex] = true
+	return state.BlockIndex
+}
+
+func ensureOpenBlocks(state *StreamState) {
+	if state.OpenBlocks == nil {
+		state.OpenBlocks = make(map[int]bool)
+	}
+}
+
+func eventWithIndex(event map[string]any, index int) map[string]any {
+	event["index"] = index
+	return event
+}
+
+func stopOpenTextBlock(state *StreamState) []map[string]any {
+	if !state.TextBlockStarted {
+		return nil
+	}
+	return stopOpenBlock(state, state.TextBlockIndex)
+}
+
+func stopOpenThinkingBlock(state *StreamState) []map[string]any {
+	if !state.ThinkingBlockStarted {
+		return nil
+	}
+	return stopOpenBlock(state, state.ThinkingBlockIndex)
+}
+
+func stopOpenBlock(state *StreamState, index int) []map[string]any {
+	ensureOpenBlocks(state)
+	if !state.OpenBlocks[index] {
+		return nil
+	}
+	state.OpenBlocks[index] = false
+	return []map[string]any{{"type": "content_block_stop", "index": index}}
 }
 
 // handleToolCallDelta 处理流式 tool_calls delta，组装为 Anthropic tool_use 事件
@@ -241,6 +358,10 @@ func (t *OpenAIToCustomTransformer) handleToolCallDelta(ctx context.Context, too
 	state, _ := ctx.Value(StreamStateKey).(*StreamState)
 
 	var events []map[string]any
+	if state != nil {
+		events = append(events, stopOpenThinkingBlock(state)...)
+		events = append(events, stopOpenTextBlock(state)...)
+	}
 
 	for _, tcRaw := range toolCallsRaw {
 		tc, ok := tcRaw.(map[string]any)
@@ -261,11 +382,10 @@ func (t *OpenAIToCustomTransformer) handleToolCallDelta(ctx context.Context, too
 
 		// 如果有 id 和 name，说明是新的 tool call 开始
 		if tcID != "" && fnName != "" {
-			// 计算 block index（text 占 0，tool_use 从 1 开始）
+			// 计算 block index
 			blockIdx := idx + 1
 			if state != nil {
-				blockIdx = state.BlockIndex + 1
-				state.BlockIndex = blockIdx
+				blockIdx = allocateContentBlock(state)
 			}
 
 			// 发送 content_block_start 事件
@@ -544,6 +664,7 @@ func (t *OpenAIToCustomTransformer) convertClaudeAssistantMessage(m map[string]a
 	case []any:
 		// 检查是否包含 tool_use
 		var textParts []string
+		var thinkingParts []string
 		var toolCalls []map[string]any
 
 		for _, part := range c {
@@ -555,6 +676,12 @@ func (t *OpenAIToCustomTransformer) convertClaudeAssistantMessage(m map[string]a
 			case "text":
 				if text, ok := p["text"].(string); ok {
 					textParts = append(textParts, text)
+				}
+			case "thinking":
+				if thinking, ok := p["thinking"].(string); ok {
+					thinkingParts = append(thinkingParts, thinking)
+				} else if text, ok := p["text"].(string); ok {
+					thinkingParts = append(thinkingParts, text)
 				}
 			case "tool_use":
 				id, _ := p["id"].(string)
@@ -585,6 +712,9 @@ func (t *OpenAIToCustomTransformer) convertClaudeAssistantMessage(m map[string]a
 
 		if len(toolCalls) > 0 {
 			assistantMsg["tool_calls"] = toolCalls
+		}
+		if len(thinkingParts) > 0 {
+			assistantMsg["reasoning_content"] = strings.Join(thinkingParts, "\n")
 		}
 
 		return []any{assistantMsg}
