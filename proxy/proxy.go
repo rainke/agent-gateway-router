@@ -181,6 +181,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		// 根据客户端协议选择不同的流式响应处理
 		if strings.Contains(path, "/v1/messages") {
 			p.handleClaudeStreamResponse(ctx, w, resp, chain, clientModel)
+		} else if strings.Contains(path, "/v1/responses") {
+			p.handleCodexStreamResponse(ctx, w, resp, chain, clientModel)
 		} else {
 			p.handleStreamResponse(ctx, w, resp, chain)
 		}
@@ -365,6 +367,96 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	msgStop := map[string]any{"type": "message_stop"}
 	msgStopJSON, _ := json.Marshal(msgStop)
 	fmt.Fprintf(w, "event: message_stop\ndata: %s\n\n", msgStopJSON)
+	flusher.Flush()
+}
+
+// handleCodexStreamResponse 处理 Codex (Responses API) 客户端的流式响应
+func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, clientModel string) {
+	// 设置流式响应头
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		slog.Error("ResponseWriter 不支持 Flusher")
+		return
+	}
+
+	// 创建 Codex 流式状态
+	state := &openai.CodexStreamState{
+		ResponseID: fmt.Sprintf("resp_%d", time.Now().UnixNano()),
+		Model:      clientModel,
+	}
+	ctx = context.WithValue(ctx, openai.CodexStreamStateKey, state)
+
+	// 发送 response.created 事件
+	createdEvent := openai.BuildCodexCreatedEvent(state)
+	createdJSON, _ := json.Marshal(createdEvent)
+	fmt.Fprintf(w, "event: response.created\ndata: %s\n\n", createdJSON)
+	flusher.Flush()
+
+	// 发送 response.in_progress 事件
+	inProgressEvent := openai.BuildCodexInProgressEvent(state)
+	inProgressJSON, _ := json.Marshal(inProgressEvent)
+	fmt.Fprintf(w, "event: response.in_progress\ndata: %s\n\n", inProgressJSON)
+	flusher.Flush()
+
+	// 读取上游流式响应并转换
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// 提取 data 内容
+		var data string
+		if strings.HasPrefix(line, "data: ") {
+			data = line[6:]
+		} else if strings.HasPrefix(line, "data:") {
+			data = line[5:]
+		} else {
+			continue
+		}
+
+		// 检查流结束标记
+		if data == "[DONE]" {
+			break
+		}
+
+		slog.Debug("上游原始 SSE chunk (codex)", "data", data)
+
+		// 通过 Transformer 链转换 chunk，得到多个 Responses API 事件
+		events, err := chain.TransformCodexStream(ctx, []byte(data))
+		if err != nil {
+			slog.Error("Codex 流式 chunk 转换失败", "error", err)
+			continue
+		}
+
+		// 输出每个事件为独立的 SSE
+		for _, eventData := range events {
+			// 从事件 JSON 中提取 type 作为 SSE event name
+			var evt map[string]any
+			if err := json.Unmarshal(eventData, &evt); err != nil {
+				continue
+			}
+			eventType, _ := evt["type"].(string)
+			if eventType == "" {
+				continue
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, eventData)
+			flusher.Flush()
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		slog.Error("读取流式响应失败 (codex)", "error", err)
+	}
+
+	// 发送 [DONE] 标记
+	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }
 
