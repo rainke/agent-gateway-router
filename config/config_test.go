@@ -29,7 +29,7 @@ name = "test-provider"
 api_base_url = "http://localhost:8000"
 api_key = "sk-test"
 models = ["model-a", "model-b"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "test-provider,model-a"
@@ -142,14 +142,14 @@ name = "dup"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [[providers]]
 name = "dup"
 api_base_url = "http://b.com"
 api_key = "sk-2"
 models = ["m2"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "dup,m1"
@@ -173,7 +173,7 @@ name = ""
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = ",m1"
@@ -221,7 +221,7 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "nonexistent,m1"
@@ -245,7 +245,7 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "p1,nonexistent-model"
@@ -269,7 +269,7 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "invalid-format-no-comma"
@@ -293,7 +293,7 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "p1,m1"
@@ -316,7 +316,7 @@ func TestIsValidTransformer(t *testing.T) {
 		name     string
 		expected bool
 	}{
-		{"openai-to-custom", true},
+		{"openai", true},
 		{"nonexistent", false},
 		{"", false},
 	}
@@ -362,14 +362,14 @@ name = "provider-a"
 api_base_url = "http://a.com/v1"
 api_key = "sk-a"
 models = ["model-1", "model-2"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [[providers]]
 name = "provider-b"
 api_base_url = "http://b.com/v1"
 api_key = "sk-b"
 models = ["model-3"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "provider-a,model-1"

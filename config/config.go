@@ -11,8 +11,8 @@ import (
 
 // Config 是 agr 的顶层配置结构
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Providers []Provider      `mapstructure:"providers"`
+	Server    ServerConfig      `mapstructure:"server"`
+	Providers []Provider        `mapstructure:"providers"`
 	Router    map[string]string `mapstructure:"router"`
 }
 
@@ -136,8 +136,8 @@ func validate(cfg *Config) error {
 func IsValidTransformer(name string) bool {
 	// 内置 Transformer 注册表
 	registry := map[string]bool{
-		"openai-to-custom": true,
-		"deepseek":         true,
+		"openai":   true,
+		"deepseek": true,
 	}
 	return registry[name]
 }

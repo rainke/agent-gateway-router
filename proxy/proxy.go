@@ -14,6 +14,7 @@ import (
 	"agr/config"
 	"agr/router"
 	"agr/transformer"
+	"agr/transformer/openai"
 )
 
 // Proxy 代理处理器
@@ -130,9 +131,9 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	}
 
 	// 构建 context，传递请求路径、上游模型名和客户端模型名
-	ctx := context.WithValue(r.Context(), transformer.RequestPathKey, path)
-	ctx = context.WithValue(ctx, transformer.UpstreamModelKey, result.Model)
-	ctx = context.WithValue(ctx, transformer.ClientModelKey, clientModel)
+	ctx := context.WithValue(r.Context(), openai.RequestPathKey, path)
+	ctx = context.WithValue(ctx, openai.UpstreamModelKey, result.Model)
+	ctx = context.WithValue(ctx, openai.ClientModelKey, clientModel)
 
 	slog.Debug("转换前的请求体", "body", string(body))
 
@@ -204,8 +205,8 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	}
 
 	// 创建流式状态追踪
-	state := &transformer.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
-	ctx = context.WithValue(ctx, transformer.StreamStateKey, state)
+	state := &openai.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
+	ctx = context.WithValue(ctx, openai.StreamStateKey, state)
 
 	// 发送 message_start 事件
 	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())

@@ -23,7 +23,7 @@ func newTestConfig() *config.Config {
 				APIBaseURL:  "http://localhost:1",
 				APIKey:      "sk-test",
 				Models:      []string{"m1"},
-				Transformer: []string{"openai-to-custom"},
+				Transformer: []string{"openai"},
 			},
 		},
 		Router: map[string]string{

@@ -1,4 +1,4 @@
-package transformer
+package openai
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func makeCtx(path, upstreamModel, clientModel string) context.Context {
 // === 请求转换测试 ===
 
 func TestTransformClaudeRequest_Basic(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "client-model")
 
 	body := []byte(`{
@@ -45,7 +45,7 @@ func TestTransformClaudeRequest_Basic(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_ContentArray(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{
@@ -70,7 +70,7 @@ func TestTransformClaudeRequest_ContentArray(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_SystemMessage(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{
@@ -99,7 +99,7 @@ func TestTransformClaudeRequest_SystemMessage(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_SystemArray(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{
@@ -129,7 +129,7 @@ func TestTransformClaudeRequest_SystemArray(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_WithTools(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{
@@ -172,7 +172,7 @@ func TestTransformClaudeRequest_WithTools(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_ToolChoice(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 
 	tests := []struct {
 		name     string
@@ -189,7 +189,7 @@ func TestTransformClaudeRequest_ToolChoice(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var toolChoice any
 			json.Unmarshal([]byte(tt.input), &toolChoice)
-			result := tr.convertClaudeToolChoice(toolChoice)
+			result := tr.ConvertClaudeToolChoice(toolChoice)
 			if tt.expected != nil {
 				if result != tt.expected {
 					t.Errorf("期望 %v，实际 %v", tt.expected, result)
@@ -205,7 +205,7 @@ func TestTransformClaudeRequest_ToolChoice(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_AssistantWithToolUse(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{
@@ -261,7 +261,7 @@ func TestTransformClaudeRequest_AssistantWithToolUse(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_ToolResultContentArray(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{
@@ -291,7 +291,7 @@ func TestTransformClaudeRequest_ToolResultContentArray(t *testing.T) {
 // === 响应转换测试 ===
 
 func TestTransformToClaudeResponse_TextOnly(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	openaiResp := `{
@@ -340,7 +340,7 @@ func TestTransformToClaudeResponse_TextOnly(t *testing.T) {
 }
 
 func TestTransformToClaudeResponse_WithToolCalls(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	openaiResp := `{
@@ -393,7 +393,7 @@ func TestTransformToClaudeResponse_WithToolCalls(t *testing.T) {
 }
 
 func TestTransformToClaudeResponse_FinishReasonLength(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	openaiResp := `{
@@ -416,7 +416,7 @@ func TestTransformToClaudeResponse_FinishReasonLength(t *testing.T) {
 }
 
 func TestTransformToClaudeResponse_InvalidJSON(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	// 无法解析的 JSON 应直接返回原始内容
@@ -433,7 +433,7 @@ func TestTransformToClaudeResponse_InvalidJSON(t *testing.T) {
 // === 流式响应转换测试 ===
 
 func TestTransformToClaudeStreamChunk_TextDelta(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}`
@@ -462,7 +462,7 @@ func TestTransformToClaudeStreamChunk_TextDelta(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_ReasoningContentDelta(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 	state := &StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
 	ctx = context.WithValue(ctx, StreamStateKey, state)
@@ -504,7 +504,7 @@ func TestTransformToClaudeStreamChunk_ReasoningContentDelta(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_TextAfterReasoningStartsTextBlock(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 	state := &StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
 	ctx = context.WithValue(ctx, StreamStateKey, state)
@@ -541,7 +541,7 @@ func TestTransformToClaudeStreamChunk_TextAfterReasoningStartsTextBlock(t *testi
 }
 
 func TestTransformToClaudeStreamChunk_EmptyContent(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `{"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`
@@ -556,7 +556,7 @@ func TestTransformToClaudeStreamChunk_EmptyContent(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_FinishStop(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`
@@ -571,7 +571,7 @@ func TestTransformToClaudeStreamChunk_FinishStop(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_FinishToolCalls(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`
@@ -586,7 +586,7 @@ func TestTransformToClaudeStreamChunk_FinishToolCalls(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_NoChoices(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `{"choices":[]}`
@@ -601,7 +601,7 @@ func TestTransformToClaudeStreamChunk_NoChoices(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_InvalidJSON(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `not json`
@@ -617,7 +617,7 @@ func TestTransformToClaudeStreamChunk_InvalidJSON(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_ToolCallDelta(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 	state := &StreamState{BlockIndex: 0}
 	ctx = context.WithValue(ctx, StreamStateKey, state)
@@ -656,7 +656,7 @@ func TestTransformToClaudeStreamChunk_ToolCallDelta(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_ToolCallArgsDelta(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 	state := &StreamState{BlockIndex: 1}
 	ctx = context.WithValue(ctx, StreamStateKey, state)
@@ -688,7 +688,7 @@ func TestTransformToClaudeStreamChunk_ToolCallArgsDelta(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_ToolCallArgsDeltaWithFinishReason(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 	state := &StreamState{BlockIndex: 1}
 	ctx = context.WithValue(ctx, StreamStateKey, state)
@@ -722,7 +722,7 @@ func TestTransformToClaudeStreamChunk_ToolCallArgsDeltaWithFinishReason(t *testi
 // === Codex 请求转换测试 ===
 
 func TestTransformCodexRequest_StringInput(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "real-model", "")
 
 	body := []byte(`{
@@ -754,7 +754,7 @@ func TestTransformCodexRequest_StringInput(t *testing.T) {
 }
 
 func TestTransformCodexRequest_ArrayInput(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "real-model", "")
 
 	body := []byte(`{
@@ -778,7 +778,7 @@ func TestTransformCodexRequest_ArrayInput(t *testing.T) {
 }
 
 func TestTransformCodexRequest_WithInstructions(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "real-model", "")
 
 	body := []byte(`{
@@ -809,7 +809,7 @@ func TestTransformCodexRequest_WithInstructions(t *testing.T) {
 // === Codex 响应转换测试 ===
 
 func TestTransformToCodexResponse(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "", "gpt-4")
 
 	openaiResp := `{
@@ -840,7 +840,7 @@ func TestTransformToCodexResponse(t *testing.T) {
 // === 默认路径透传测试 ===
 
 func TestTransformRequest_UnknownPath(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/unknown/path", "", "")
 
 	body := []byte(`{"model":"test","data":"unchanged"}`)
@@ -854,7 +854,7 @@ func TestTransformRequest_UnknownPath(t *testing.T) {
 }
 
 func TestTransformResponse_UnknownPath(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/unknown/path", "", "")
 
 	body := []byte(`{"result":"ok"}`)
@@ -868,7 +868,7 @@ func TestTransformResponse_UnknownPath(t *testing.T) {
 }
 
 func TestTransformStream_UnknownPath(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/unknown/path", "", "")
 
 	chunk := []byte(`{"data":"chunk"}`)
@@ -882,7 +882,7 @@ func TestTransformStream_UnknownPath(t *testing.T) {
 }
 
 func TestTransformStream_CodexPath(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "", "gpt-4")
 
 	chunk := []byte(`{"data":"chunk"}`)
@@ -896,7 +896,7 @@ func TestTransformStream_CodexPath(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_InvalidJSON(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	_, err := tr.TransformRequest(ctx, []byte(`not json`))
@@ -906,7 +906,7 @@ func TestTransformClaudeRequest_InvalidJSON(t *testing.T) {
 }
 
 func TestTransformCodexRequest_InvalidJSON(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "real-model", "")
 
 	_, err := tr.TransformRequest(ctx, []byte(`not json`))
@@ -929,7 +929,7 @@ func TestExtractToolResultContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractToolResultContent(tt.input)
+			result := ExtractToolResultContent(tt.input)
 			if result != tt.expected {
 				t.Errorf("期望 %q，实际 %q", tt.expected, result)
 			}
@@ -938,7 +938,7 @@ func TestExtractToolResultContent(t *testing.T) {
 }
 
 func TestTransformClaudeRequest_TopP(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
 
 	body := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"top_p":0.9}`)
@@ -956,9 +956,9 @@ func TestTransformClaudeRequest_TopP(t *testing.T) {
 }
 
 func TestConvertClaudeUserMessage_PlainString(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	msg := map[string]any{"role": "user", "content": "hello"}
-	result := tr.convertClaudeUserMessage(msg)
+	result := tr.ConvertClaudeUserMessage(msg)
 	if len(result) != 1 {
 		t.Fatalf("应返回 1 条消息，实际 %d", len(result))
 	}
@@ -969,7 +969,7 @@ func TestConvertClaudeUserMessage_PlainString(t *testing.T) {
 }
 
 func TestConvertClaudeUserMessage_MixedContent(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	msg := map[string]any{
 		"role": "user",
 		"content": []any{
@@ -977,7 +977,7 @@ func TestConvertClaudeUserMessage_MixedContent(t *testing.T) {
 			map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "result"},
 		},
 	}
-	result := tr.convertClaudeUserMessage(msg)
+	result := tr.ConvertClaudeUserMessage(msg)
 	// 混合内容时，text 在前，tool 消息在后
 	if len(result) != 2 {
 		t.Fatalf("混合内容应返回 2 条消息，实际 %d", len(result))
@@ -993,7 +993,7 @@ func TestConvertClaudeUserMessage_MixedContent(t *testing.T) {
 }
 
 func TestConvertClaudeUserMessage_MultipleToolResults(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	msg := map[string]any{
 		"role": "user",
 		"content": []any{
@@ -1001,7 +1001,7 @@ func TestConvertClaudeUserMessage_MultipleToolResults(t *testing.T) {
 			map[string]any{"type": "tool_result", "tool_use_id": "t2", "content": "r2"},
 		},
 	}
-	result := tr.convertClaudeUserMessage(msg)
+	result := tr.ConvertClaudeUserMessage(msg)
 	// 多个 tool_result 返回多条 tool 消息
 	if len(result) != 2 {
 		t.Errorf("应有 2 个 tool 消息，实际 %d", len(result))
@@ -1009,9 +1009,9 @@ func TestConvertClaudeUserMessage_MultipleToolResults(t *testing.T) {
 }
 
 func TestConvertClaudeAssistantMessage_PlainString(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	msg := map[string]any{"role": "assistant", "content": "hello"}
-	results := tr.convertClaudeAssistantMessage(msg)
+	results := tr.ConvertClaudeAssistantMessage(msg)
 	if len(results) != 1 {
 		t.Fatalf("应返回 1 条消息，实际 %d", len(results))
 	}
@@ -1022,32 +1022,32 @@ func TestConvertClaudeAssistantMessage_PlainString(t *testing.T) {
 }
 
 func TestConvertClaudeAssistantMessage_OtherType(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	msg := map[string]any{"role": "assistant", "content": 123}
-	results := tr.convertClaudeAssistantMessage(msg)
+	results := tr.ConvertClaudeAssistantMessage(msg)
 	if len(results) != 1 {
 		t.Fatalf("应返回 1 条消息")
 	}
 }
 
 func TestConvertClaudeToolChoice_Unknown(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
-	result := tr.convertClaudeToolChoice(map[string]any{"type": "unknown"})
+	tr := &Transformer{}
+	result := tr.ConvertClaudeToolChoice(map[string]any{"type": "unknown"})
 	if result != "auto" {
 		t.Errorf("未知 tool_choice 类型应返回 auto，实际 %v", result)
 	}
 }
 
 func TestConvertClaudeToolChoice_NonMapNonString(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
-	result := tr.convertClaudeToolChoice(123)
+	tr := &Transformer{}
+	result := tr.ConvertClaudeToolChoice(123)
 	if result != "auto" {
 		t.Errorf("非 map/string 类型应返回 auto，实际 %v", result)
 	}
 }
 
 func TestTransformToClaudeResponse_EmptyChoices(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	openaiResp := `{"id":"123","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}`
@@ -1065,7 +1065,7 @@ func TestTransformToClaudeResponse_EmptyChoices(t *testing.T) {
 }
 
 func TestTransformToCodexResponse_InvalidJSON(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/responses", "", "gpt-4")
 
 	body := []byte(`not json`)
@@ -1079,14 +1079,14 @@ func TestTransformToCodexResponse_InvalidJSON(t *testing.T) {
 }
 
 func TestNowISO(t *testing.T) {
-	result := nowISO()
+	result := NowISO()
 	if result == "" {
-		t.Error("nowISO 不应返回空字符串")
+		t.Error("NowISO 不应返回空字符串")
 	}
 }
 
 func TestTransformToClaudeStreamChunk_UsageChunk(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	// usage chunk 没有有效 choices
@@ -1101,7 +1101,7 @@ func TestTransformToClaudeStreamChunk_UsageChunk(t *testing.T) {
 }
 
 func TestTransformToClaudeStreamChunk_NoDelta(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
 	chunk := `{"choices":[{"index":0}]}`
@@ -1115,10 +1115,10 @@ func TestTransformToClaudeStreamChunk_NoDelta(t *testing.T) {
 }
 
 func TestHandleToolCallDelta_EmptyToolCalls(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
-	result, err := tr.handleToolCallDelta(ctx, []any{}, "claude-3")
+	result, err := tr.HandleToolCallDelta(ctx, []any{}, "claude-3")
 	if err != nil {
 		t.Fatalf("不应返回错误: %v", err)
 	}
@@ -1128,10 +1128,10 @@ func TestHandleToolCallDelta_EmptyToolCalls(t *testing.T) {
 }
 
 func TestHandleToolCallDelta_InvalidItem(t *testing.T) {
-	tr := &OpenAIToCustomTransformer{}
+	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
 
-	result, err := tr.handleToolCallDelta(ctx, []any{"not a map"}, "claude-3")
+	result, err := tr.HandleToolCallDelta(ctx, []any{"not a map"}, "claude-3")
 	if err != nil {
 		t.Fatalf("不应返回错误: %v", err)
 	}
