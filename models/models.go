@@ -177,30 +177,20 @@ const (
 )
 
 // LoadModels 根据配置加载模型信息
-// 如果 provider 配置了 models_config，从 ~/.agr/<filename> 加载 JSON
+// 如果顶层配置了 models_config，从 ~/.agr/<filename> 加载 JSON
 // 否则根据 router 中配置的模型名生成默认的 ModelInfo
 func LoadModels(cfg *config.Config) (*ModelsResponse, error) {
-	var allModels []ModelInfo
-
-	// 收集所有 provider 的 models_config 文件中的模型
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if p.ModelsConfig != "" {
-			models, err := loadModelsFromFile(p.ModelsConfig)
-			if err != nil {
-				return nil, fmt.Errorf("加载 provider %s 的 models_config 失败: %w", p.Name, err)
-			}
-			allModels = append(allModels, models...)
+	// 从顶层 server.models_config 加载
+	if cfg.Server.ModelsConfig != "" {
+		models, err := loadModelsFromFile(cfg.Server.ModelsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("加载 models_config 失败: %w", err)
 		}
-	}
-
-	// 如果有任何 provider 配置了 models_config，直接返回文件中的模型
-	if len(allModels) > 0 {
-		return &ModelsResponse{Models: allModels}, nil
+		return &ModelsResponse{Models: models}, nil
 	}
 
 	// 没有配置 models_config，根据 router 中的模型名生成默认 ModelInfo
-	allModels = generateDefaultModels(cfg)
+	allModels := generateDefaultModels(cfg)
 	return &ModelsResponse{Models: allModels}, nil
 }
 
