@@ -224,8 +224,6 @@ func extractCodexContentText(content []any) string {
 	return strings.Join(parts, "\n")
 }
 
-
-
 // convertCodexFunctionCallOutput 将 Responses API function_call_output 转换为 tool message
 func convertCodexFunctionCallOutput(m map[string]any) map[string]any {
 	callID, _ := m["call_id"].(string)

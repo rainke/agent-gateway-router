@@ -117,8 +117,8 @@ func TestTransformToCodexStreamChunk_FinishStop(t *testing.T) {
 	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":null}]}`)
 	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
 
-	// 发送 finish_reason=stop
-	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	// 发送 finish_reason=stop（带 usage，模拟 usage 和 finish 在同一个 chunk）
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
 	events, err := tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
 	if err != nil {
 		t.Fatalf("不应返回错误: %v", err)
@@ -153,8 +153,8 @@ func TestTransformToCodexStreamChunk_FinishLength(t *testing.T) {
 	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}`)
 	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
 
-	// 发送 finish_reason=length
-	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`)
+	// 发送 finish_reason=length（带 usage）
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
 	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
 
 	var lastEvt map[string]any
@@ -323,7 +323,7 @@ func TestTransformToCodexStreamChunk_ToolCallComplete(t *testing.T) {
 	tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
 
 	// finish
-	chunk3 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`)
+	chunk3 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":15}}`)
 	events, _ := tr.transformToCodexStreamChunk(ctx, chunk3, "gpt-4")
 
 	// 应包含 function_call_arguments.done, output_item.done, response.completed
@@ -453,18 +453,14 @@ func TestTransformToCodexStreamChunk_SequenceNumbers(t *testing.T) {
 
 func TestTransformToCodexStreamChunk_CompletedEventUsage(t *testing.T) {
 	tr := &Transformer{}
-	ctx, state := makeCodexCtxWithState("gpt-4")
+	ctx, _ := makeCodexCtxWithState("gpt-4")
 
 	// 发送文本
 	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`)
 	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
 
-	// 设置 usage（模拟上游在最后 chunk 返回 usage）
-	state.InputTokens = 20
-	state.OutputTokens = 10
-
-	// finish
-	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	// finish 带 usage（模拟 usage 和 finish 在同一个 chunk）
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":10}}`)
 	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
 
 	// 找到 response.completed 事件
@@ -497,8 +493,8 @@ func TestTransformToCodexStreamChunk_CompletedEventOutput(t *testing.T) {
 	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"content":"Hello World"},"finish_reason":null}]}`)
 	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
 
-	// finish
-	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	// finish 带 usage
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`)
 	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
 
 	// 找到 response.completed 事件，验证 output 包含完整文本
@@ -534,8 +530,8 @@ func TestTransformToCodexStreamChunk_ContentFilterFinish(t *testing.T) {
 	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"content":"bad"},"finish_reason":null}]}`)
 	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
 
-	// content_filter finish
-	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}`)
+	// content_filter finish 带 usage
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}`)
 	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
 
 	for _, e := range events {
@@ -639,21 +635,34 @@ func TestTransformToCodexStreamChunk_NoDelta(t *testing.T) {
 
 func TestTransformToCodexStreamChunk_OnlyFinishNoContent(t *testing.T) {
 	tr := &Transformer{}
-	ctx, _ := makeCodexCtxWithState("gpt-4")
+	ctx, state := makeCodexCtxWithState("gpt-4")
 
-	// 直接 finish 没有任何内容（边界情况）
+	// 直接 finish 没有任何内容（边界情况）- 不带 usage，应标记为 Finished
 	chunk := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
 	events, err := tr.transformToCodexStreamChunk(ctx, chunk, "gpt-4")
 	if err != nil {
 		t.Fatalf("不应返回错误: %v", err)
 	}
 
-	// 应只有 response.completed
-	if len(events) != 1 {
-		t.Fatalf("只有 finish 时应产生 1 个事件，实际 %d", len(events))
+	// 没有 usage 时不应立即产生 response.completed，而是标记 Finished
+	if len(events) != 0 {
+		t.Fatalf("无 usage 时 finish 不应立即产生事件，实际 %d", len(events))
+	}
+	if !state.Finished {
+		t.Error("state.Finished 应为 true")
+	}
+	if state.FinishStatus != "completed" {
+		t.Errorf("state.FinishStatus 应为 completed，实际 %v", state.FinishStatus)
+	}
+
+	// 模拟后续收到 usage chunk（choices 为空）
+	usageChunk := []byte(`{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2}}`)
+	events2, _ := tr.transformToCodexStreamChunk(ctx, usageChunk, "gpt-4")
+	if len(events2) != 1 {
+		t.Fatalf("收到 usage 后应产生 1 个事件，实际 %d", len(events2))
 	}
 	var evt map[string]any
-	json.Unmarshal(events[0], &evt)
+	json.Unmarshal(events2[0], &evt)
 	if evt["type"] != "response.completed" {
 		t.Errorf("事件应为 response.completed，实际 %v", evt["type"])
 	}
@@ -697,8 +706,8 @@ func TestTransformToCodexStreamChunk_MultipleToolCalls(t *testing.T) {
 		t.Error("第二个 tool call 应产生 output_item.added 事件")
 	}
 
-	// finish
-	chunk4 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`)
+	// finish 带 usage
+	chunk4 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":30,"completion_tokens":20}}`)
 	events4, _ := tr.transformToCodexStreamChunk(ctx, chunk4, "gpt-4")
 
 	// 验证 completed 事件包含两个 function calls
@@ -1129,5 +1138,162 @@ func TestTransformCodexRequest_OnlyBuiltinTools(t *testing.T) {
 	// 内置工具应被跳过，tools 字段可能为 null 或空数组
 	if tools, ok := parsed["tools"].([]any); ok && len(tools) != 0 {
 		t.Errorf("内置工具应被跳过，实际 %d 个 tools", len(tools))
+	}
+}
+
+// === 延迟 usage 场景测试 ===
+
+func TestTransformToCodexStreamChunk_DelayedUsage(t *testing.T) {
+	// 模拟真实场景：finish_reason 和 usage 在不同的 chunk 中
+	// 这是很多 OpenAI 兼容 provider（如天翼云 GLM）的实际行为
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("gpt-4")
+
+	// 发送文本
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
+
+	// 发送 finish_reason（不带 usage）
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	events2, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
+
+	// 不应包含 response.completed（因为还没收到 usage）
+	for _, e := range events2 {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		if evt["type"] == "response.completed" {
+			t.Fatal("finish 时没有 usage 不应立即发送 response.completed")
+		}
+	}
+
+	// 验证状态标记
+	if !state.Finished {
+		t.Error("state.Finished 应为 true")
+	}
+
+	// 后续收到单独的 usage chunk（choices 为空）
+	chunk3 := []byte(`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50}}`)
+	events3, _ := tr.transformToCodexStreamChunk(ctx, chunk3, "gpt-4")
+
+	// 现在应该发送 response.completed
+	if len(events3) != 1 {
+		t.Fatalf("收到 usage 后应产生 1 个事件，实际 %d", len(events3))
+	}
+	var evt map[string]any
+	json.Unmarshal(events3[0], &evt)
+	if evt["type"] != "response.completed" {
+		t.Errorf("事件应为 response.completed，实际 %v", evt["type"])
+	}
+
+	resp := evt["response"].(map[string]any)
+	usage := resp["usage"].(map[string]any)
+	if usage["input_tokens"].(float64) != 100 {
+		t.Errorf("input_tokens 应为 100，实际 %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"].(float64) != 50 {
+		t.Errorf("output_tokens 应为 50，实际 %v", usage["output_tokens"])
+	}
+	if usage["total_tokens"].(float64) != 150 {
+		t.Errorf("total_tokens 应为 150，实际 %v", usage["total_tokens"])
+	}
+
+	// Finished 应被重置
+	if state.Finished {
+		t.Error("发送 completed 后 state.Finished 应为 false")
+	}
+}
+
+func TestTransformToCodexStreamChunk_DelayedUsageWithToolCalls(t *testing.T) {
+	// 模拟 tool call 场景下 usage 延迟到达
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("gpt-4")
+
+	// tool call 开始
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":""}}]},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "gpt-4")
+
+	// tool call arguments
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":\"ls\"}"}}]},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk2, "gpt-4")
+
+	// finish（不带 usage）
+	chunk3 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`)
+	events3, _ := tr.transformToCodexStreamChunk(ctx, chunk3, "gpt-4")
+
+	// 不应包含 response.completed
+	for _, e := range events3 {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		if evt["type"] == "response.completed" {
+			t.Fatal("finish 时没有 usage 不应立即发送 response.completed")
+		}
+	}
+	if !state.Finished {
+		t.Error("state.Finished 应为 true")
+	}
+
+	// 收到 usage
+	chunk4 := []byte(`{"choices":[],"usage":{"prompt_tokens":200,"completion_tokens":30}}`)
+	events4, _ := tr.transformToCodexStreamChunk(ctx, chunk4, "gpt-4")
+
+	if len(events4) != 1 {
+		t.Fatalf("收到 usage 后应产生 1 个事件，实际 %d", len(events4))
+	}
+	var evt map[string]any
+	json.Unmarshal(events4[0], &evt)
+	if evt["type"] != "response.completed" {
+		t.Errorf("事件应为 response.completed，实际 %v", evt["type"])
+	}
+
+	resp := evt["response"].(map[string]any)
+	usage := resp["usage"].(map[string]any)
+	if usage["input_tokens"].(float64) != 200 {
+		t.Errorf("input_tokens 应为 200，实际 %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"].(float64) != 30 {
+		t.Errorf("output_tokens 应为 30，实际 %v", usage["output_tokens"])
+	}
+}
+
+func TestBuildCodexFinalCompletedEvent(t *testing.T) {
+	// 测试 proxy 层兜底函数
+	state := &CodexStreamState{
+		ResponseID:      "resp_test",
+		Model:           "gpt-4",
+		AccumulatedText: "Hello",
+		InputTokens:     50,
+		OutputTokens:    25,
+		SequenceNumber:  10,
+		FinishStatus:    "completed",
+	}
+
+	event := BuildCodexFinalCompletedEvent(state)
+
+	if event["type"] != "response.completed" {
+		t.Errorf("type 应为 response.completed，实际 %v", event["type"])
+	}
+
+	resp := event["response"].(map[string]any)
+	if resp["status"] != "completed" {
+		t.Errorf("status 应为 completed，实际 %v", resp["status"])
+	}
+
+	usage := resp["usage"].(map[string]any)
+	if usage["input_tokens"] != 50 {
+		t.Errorf("input_tokens 应为 50，实际 %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"] != 25 {
+		t.Errorf("output_tokens 应为 25，实际 %v", usage["output_tokens"])
+	}
+	if usage["total_tokens"] != 75 {
+		t.Errorf("total_tokens 应为 75，实际 %v", usage["total_tokens"])
+	}
+
+	output := resp["output"].([]map[string]any)
+	if len(output) != 1 {
+		t.Fatalf("output 应有 1 个 item，实际 %d", len(output))
+	}
+	if output[0]["type"] != "message" {
+		t.Errorf("output[0].type 应为 message")
 	}
 }

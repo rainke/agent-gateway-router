@@ -455,6 +455,16 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 		slog.Error("读取流式响应失败 (codex)", "error", err)
 	}
 
+	// 兜底：如果流已结束但 response.completed 尚未发送（provider 没有返回单独的 usage chunk）
+	if state.Finished {
+		state.SequenceNumber++
+		completed := openai.BuildCodexFinalCompletedEvent(state)
+		completedJSON, _ := json.Marshal(completed)
+		fmt.Fprintf(w, "event: response.completed\ndata: %s\n\n", completedJSON)
+		flusher.Flush()
+		state.Finished = false
+	}
+
 	// 发送 [DONE] 标记
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()

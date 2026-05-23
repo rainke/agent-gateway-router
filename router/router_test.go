@@ -25,9 +25,9 @@ func newTestConfig() *config.Config {
 			},
 		},
 		Router: map[string]string{
-			"default":   "provider-a,model-1",
-			"claude-3":  "provider-a,model-2",
-			"special":   "provider-b,model-3",
+			"default":  "provider-a,model-1",
+			"claude-3": "provider-a,model-2",
+			"special":  "provider-b,model-3",
 		},
 	}
 }
