@@ -25,11 +25,12 @@ type ServerConfig struct {
 
 // Provider 上游供应商配置
 type Provider struct {
-	Name        string   `mapstructure:"name"`
-	APIBaseURL  string   `mapstructure:"api_base_url"`
-	APIKey      string   `mapstructure:"api_key"`
-	Models      []string `mapstructure:"models"`
-	Transformer []string `mapstructure:"transformer"`
+	Name         string   `mapstructure:"name"`
+	APIBaseURL   string   `mapstructure:"api_base_url"`
+	APIKey       string   `mapstructure:"api_key"`
+	Models       []string `mapstructure:"models"`
+	Transformer  []string `mapstructure:"transformer"`
+	ModelsConfig string   `mapstructure:"models_config"`
 }
 
 // Load 加载并校验配置文件
