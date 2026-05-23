@@ -29,7 +29,7 @@ When a client sends a request, agr extracts the model name, routes it to the con
 
 - **Multi-Protocol Support** — Proxy for Claude Code (`/v1/messages`) and Codex (`/v1/responses`) with protocol transformation
 - **Model Routing** — Route client-requested models to different upstream providers. Supports exact match with fallback to default
-- **Transformer Chain** — Configurable ordered pipeline of transformers (e.g., `["openai-to-custom", "deepseek"]`) for request/response adaptation
+- **Transformer Chain** — Configurable ordered pipeline of transformers (e.g., `["openai", "deepseek"]`) for request/response adaptation
 - **Streaming** — SSE streaming response forwarding with real-time per-chunk transformation
 - **DeepSeek Integration** — Specialized transformer that maps Anthropic thinking blocks to DeepSeek reasoning_content and vice versa
 - **Daemon Management** — `start`, `stop`, `restart` commands with PID file and graceful shutdown (30s timeout for in-flight streams)
@@ -70,14 +70,14 @@ name = "deepseek"
 api_base_url = "https://api.deepseek.com/chat/completions"
 api_key = "sk-xxx"
 models = ["deepseek-chat", "deepseek-coder"]
-transformer = ["openai-to-custom", "deepseek"]
+transformer = ["openai", "deepseek"]
 
 [[providers]]
 name = "eaichat"
 api_base_url = "https://eaichat.ctyun.cn/ai/platform/v2/cp/chat/completions"
 api_key = "sk-xxx"
 models = ["glm-5-oc"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "deepseek,deepseek-chat"
@@ -97,7 +97,7 @@ Built-in transformers:
 
 | Name | Purpose |
 |------|---------|
-| `openai-to-custom` | Converts between Claude/Codex/OpenAI protocols and upstream formats |
+| `openai` | Converts between Claude/Codex/OpenAI protocols and upstream formats |
 | `deepseek` | Handles DeepSeek-specific `reasoning_content` ↔ Anthropic thinking mapping |
 
 Transformers are executed in order for requests and reverse order for responses.
@@ -142,5 +142,14 @@ gofmt -l -w .
 ```
 
 ## License
+ 
+ ## Roadmap
+ 
+ | Upstream API | Claude Code | Codex | VS Code Copilot |
+ |--------------|:-----------:|:-----:|:---------------:|
+ | OpenAI `/v1/chat/completions` | ✅ | ✅ | 🔲 |
+ | Anthropic `/v1/messages` | — | 🔲 | 🔲 |
+ 
+ > **Note:** Claude Code natively uses the Anthropic `/v1/messages` API, so it does not need to be listed as a client target for that upstream.
 
 MIT

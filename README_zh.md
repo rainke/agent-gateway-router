@@ -29,7 +29,7 @@ AI 客户端 (Claude Code / Codex / Copilot)
 
 - **多协议支持** — 代理 Claude Code（`/v1/messages`）和 Codex（`/v1/responses`）协议并进行协议转换
 - **模型路由** — 将客户端请求的模型路由到不同的上游提供商。支持精确匹配并回退到默认值
-- **转换器链** — 可配置的有序转换器管道（例如 `["openai-to-custom", "deepseek"]`）用于请求/响应适配
+- **转换器链** — 可配置的有序转换器管道（例如 `["openai", "deepseek"]`）用于请求/响应适配
 - **流式传输** — SSE 流式响应转发，支持实时逐块转换
 - **DeepSeek 集成** — 专用转换器，将 Anthropic thinking 块映射到 DeepSeek reasoning_content，反之亦然
 - **守护进程管理** — `start`、`stop`、`restart` 命令，支持 PID 文件和优雅关闭（进行中的流有 30 秒超时）
@@ -70,14 +70,14 @@ name = "deepseek"
 api_base_url = "https://api.deepseek.com/chat/completions"
 api_key = "sk-xxx"
 models = ["deepseek-chat", "deepseek-coder"]
-transformer = ["openai-to-custom", "deepseek"]
+transformer = ["openai", "deepseek"]
 
 [[providers]]
 name = "eaichat"
 api_base_url = "https://eaichat.ctyun.cn/ai/platform/v2/cp/chat/completions"
 api_key = "sk-xxx"
 models = ["glm-5-oc"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "deepseek,deepseek-chat"
@@ -97,7 +97,7 @@ default = "deepseek,deepseek-chat"
 
 | 名称 | 用途 |
 |------|------|
-| `openai-to-custom` | 在 Claude/Codex/OpenAI 协议和上游格式之间转换 |
+| `openai` | 在 Claude/Codex/OpenAI 协议和上游格式之间转换 |
 | `deepseek` | 处理 DeepSeek 特有的 `reasoning_content` ↔ Anthropic thinking 映射 |
 
 转换器按顺序执行请求处理，按逆序执行响应处理。
@@ -142,5 +142,14 @@ gofmt -l -w .
 ```
 
 ## 许可证
+ 
+ ## 路线图
+ 
+ | 上游 API | Claude Code | Codex | VS Code Copilot |
+ |----------|:-----------:|:-----:|:---------------:|
+ | OpenAI `/v1/chat/completions` | ✅ | ✅ | 🔲 |
+ | Anthropic `/v1/messages` | — | 🔲 | 🔲 |
+ 
+ > **说明：** Claude Code 原生使用 Anthropic `/v1/messages` API，因此无需将其列为该上游的客户端目标。
 
 MIT

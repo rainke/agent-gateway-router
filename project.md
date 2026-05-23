@@ -95,14 +95,14 @@ name = "eaichat"
 api_base_url = "https://eaichat.ctyun.cn/ai/platform/v2/cp/chat/completions"
 api_key = "sk-eaichat-secret-token-xxx"
 models = ["glm-5-oc"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [[providers]]
 name = "opencode-go"
 api_base_url = "https://opencode.ai/zen/go/v1/messages"
 api_key = "sk-xxx"
 models = ["minimax-m2.7"]
-transformer = ["openai-to-custom"]
+transformer = ["openai"]
 
 [router]
 default = "eaichat,glm-5-oc"
@@ -211,7 +211,7 @@ type Transformer interface {
 }
 ```
 
-一期内置 `openai-to-custom` Transformer，并采用双轨分流：
+一期内置 `openai` Transformer，并采用双轨分流：
 
 ```go
 type OpenAIToCustomTransformer struct{}
@@ -372,7 +372,7 @@ Ollama Generate 请求示例：
 
 ## 十二、二期：Ollama 转换规则
 
-二期将 `openai-to-custom` Transformer 扩展为四轨分流：
+二期将 `openai` Transformer 扩展为四轨分流：
 
 ```go
 type OpenAIToCustomTransformer struct{}
