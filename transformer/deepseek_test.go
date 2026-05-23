@@ -4,7 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"agr/transformer/openai"
 )
+
+func makeCtx(path, upstreamModel, clientModel string) context.Context {
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, openai.RequestPathKey, path)
+	ctx = context.WithValue(ctx, openai.UpstreamModelKey, upstreamModel)
+	ctx = context.WithValue(ctx, openai.ClientModelKey, clientModel)
+	return ctx
+}
 
 func TestDeepSeekTransformRequest_DisablesThinkingForNonClaudeMessages(t *testing.T) {
 	tr := &DeepSeekTransformer{}
@@ -83,7 +93,7 @@ func TestDeepSeekTransformRequest_MovesClaudeThinkingToReasoningContent(t *testi
 }
 
 func TestDeepSeekChain_PreservesClaudeThinkingAsReasoningContent(t *testing.T) {
-	chain, err := NewChain([]string{"openai-to-custom", "deepseek"})
+	chain, err := NewChain([]string{"openai", "deepseek"})
 	if err != nil {
 		t.Fatalf("创建 Chain 失败: %v", err)
 	}

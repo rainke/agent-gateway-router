@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"agr/transformer/openai"
 )
 
 // DeepSeekTransformer 处理 DeepSeek 特有的协议差异
@@ -36,7 +38,7 @@ func (t *DeepSeekTransformer) TransformStream(ctx context.Context, chunk []byte)
 }
 
 func isClaudeMessagesRequest(ctx context.Context) bool {
-	path, _ := ctx.Value(RequestPathKey).(string)
+	path, _ := ctx.Value(openai.RequestPathKey).(string)
 	return strings.Contains(path, "/v1/messages")
 }
 

@@ -21,7 +21,7 @@ func newTestProxy(upstreamURL string) *Proxy {
 				APIBaseURL:  upstreamURL,
 				APIKey:      "sk-test",
 				Models:      []string{"model-a"},
-				Transformer: []string{"openai-to-custom"},
+				Transformer: []string{"openai"},
 			},
 		},
 		Router: map[string]string{
@@ -767,7 +767,7 @@ func TestHandleMessages_NoAPIKey(t *testing.T) {
 				APIBaseURL:  upstream.URL,
 				APIKey:      "",
 				Models:      []string{"m1"},
-				Transformer: []string{"openai-to-custom"},
+				Transformer: []string{"openai"},
 			},
 		},
 		Router: map[string]string{"default": "nokey,m1"},
@@ -903,7 +903,7 @@ func TestHandleMessages_RouteNotFound(t *testing.T) {
 				APIBaseURL:  "http://localhost:1",
 				APIKey:      "sk-test",
 				Models:      []string{"m1"},
-				Transformer: []string{"openai-to-custom"},
+				Transformer: []string{"openai"},
 			},
 		},
 		Router: map[string]string{
