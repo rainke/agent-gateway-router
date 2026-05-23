@@ -88,10 +88,17 @@ func (t *Transformer) TransformStream(ctx context.Context, chunk []byte) ([]byte
 	case strings.Contains(path, "/v1/messages"):
 		return t.transformToClaudeStreamChunk(ctx, chunk, clientModel)
 	case strings.Contains(path, "/v1/responses"):
+		// Codex 流式由 TransformCodexStream 处理
 		return chunk, nil
 	default:
 		return chunk, nil
 	}
+}
+
+// TransformCodexStream 实现 CodexStreamTransformer 接口
+func (t *Transformer) TransformCodexStream(ctx context.Context, chunk []byte) ([][]byte, error) {
+	clientModel, _ := ctx.Value(ClientModelKey).(string)
+	return t.transformToCodexStreamChunk(ctx, chunk, clientModel)
 }
 
 // NowISO 返回当前时间的 ISO 格式字符串

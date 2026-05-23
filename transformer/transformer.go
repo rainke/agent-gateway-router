@@ -71,6 +71,22 @@ func (c *Chain) TransformStream(ctx context.Context, chunk []byte) ([]byte, erro
 	return chunk, nil
 }
 
+// CodexStreamTransformer 支持 Codex 流式转换的接口
+type CodexStreamTransformer interface {
+	TransformCodexStream(ctx context.Context, chunk []byte) ([][]byte, error)
+}
+
+// TransformCodexStream 执行 Codex 流式 chunk 转换，返回多个事件
+func (c *Chain) TransformCodexStream(ctx context.Context, chunk []byte) ([][]byte, error) {
+	for i := len(c.transformers) - 1; i >= 0; i-- {
+		if ct, ok := c.transformers[i].(CodexStreamTransformer); ok {
+			return ct.TransformCodexStream(ctx, chunk)
+		}
+	}
+	// 如果没有 transformer 支持 Codex 流式转换，返回原始 chunk
+	return [][]byte{chunk}, nil
+}
+
 // registry 内置 Transformer 注册表
 var registry = map[string]func() Transformer{
 	"openai":   func() Transformer { return &openai.Transformer{} },

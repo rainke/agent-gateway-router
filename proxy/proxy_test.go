@@ -802,7 +802,7 @@ func TestHandleResponses_InvalidBody(t *testing.T) {
 }
 
 func TestHandleResponses_StreamWithEventLines(t *testing.T) {
-	// 测试包含 event: 行的流式响应
+	// 测试 Codex 流式响应转换为 Responses API 格式
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
@@ -811,7 +811,8 @@ func TestHandleResponses_StreamWithEventLines(t *testing.T) {
 		fmt.Fprintf(w, "event: message\n")
 		fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"test\"},\"finish_reason\":null}]}\n\n")
 		flusher.Flush()
-		fmt.Fprintf(w, "\n") // 空行
+		fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		flusher.Flush()
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	}))
@@ -831,8 +832,15 @@ func TestHandleResponses_StreamWithEventLines(t *testing.T) {
 	}
 
 	respBody := w.Body.String()
-	if !strings.Contains(respBody, "event: message") {
-		t.Error("event: 行应被透传")
+	// 应包含 Responses API 事件
+	if !strings.Contains(respBody, "event: response.created") {
+		t.Error("应包含 response.created 事件")
+	}
+	if !strings.Contains(respBody, "event: response.output_text.delta") {
+		t.Error("应包含 response.output_text.delta 事件")
+	}
+	if !strings.Contains(respBody, "event: response.completed") {
+		t.Error("应包含 response.completed 事件")
 	}
 	if !strings.Contains(respBody, "[DONE]") {
 		t.Error("应包含 [DONE]")
@@ -891,6 +899,171 @@ func TestHandleMessages_StreamFinishLength(t *testing.T) {
 	respBody := w.Body.String()
 	if !strings.Contains(respBody, `"stop_reason":"max_tokens"`) {
 		t.Error("stop_reason 应为 max_tokens")
+	}
+}
+
+func TestHandleResponses_StreamTextComplete(t *testing.T) {
+	// 测试 Codex 流式响应完整的文本生成流程
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+
+		chunks := []string{
+			`{"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{"content":" World"},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`,
+		}
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","input":"hello","stream":true}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleResponses(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("状态码期望 200，实际 %d", w.Code)
+	}
+
+	respBody := w.Body.String()
+
+	// 验证完整的 Responses API 事件生命周期
+	if !strings.Contains(respBody, "event: response.created") {
+		t.Error("应包含 response.created")
+	}
+	if !strings.Contains(respBody, "event: response.in_progress") {
+		t.Error("应包含 response.in_progress")
+	}
+	if !strings.Contains(respBody, "event: response.output_item.added") {
+		t.Error("应包含 response.output_item.added")
+	}
+	if !strings.Contains(respBody, "event: response.content_part.added") {
+		t.Error("应包含 response.content_part.added")
+	}
+	if !strings.Contains(respBody, "event: response.output_text.delta") {
+		t.Error("应包含 response.output_text.delta")
+	}
+	if !strings.Contains(respBody, "event: response.output_text.done") {
+		t.Error("应包含 response.output_text.done")
+	}
+	if !strings.Contains(respBody, "event: response.content_part.done") {
+		t.Error("应包含 response.content_part.done")
+	}
+	if !strings.Contains(respBody, "event: response.output_item.done") {
+		t.Error("应包含 response.output_item.done")
+	}
+	if !strings.Contains(respBody, "event: response.completed") {
+		t.Error("应包含 response.completed")
+	}
+	if !strings.Contains(respBody, "[DONE]") {
+		t.Error("应包含 [DONE]")
+	}
+	// 验证文本内容
+	if !strings.Contains(respBody, `"delta":"Hello"`) {
+		t.Error("应包含 delta Hello")
+	}
+	if !strings.Contains(respBody, `"delta":" World"`) {
+		t.Error("应包含 delta World")
+	}
+}
+
+func TestHandleResponses_StreamWithToolCalls(t *testing.T) {
+	// 测试 Codex 流式响应中的 tool call
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+
+		chunks := []string{
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":""}}]},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":"}}]},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		}
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","input":"run ls","stream":true}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleResponses(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("状态码期望 200，实际 %d", w.Code)
+	}
+
+	respBody := w.Body.String()
+
+	if !strings.Contains(respBody, "event: response.output_item.added") {
+		t.Error("应包含 response.output_item.added")
+	}
+	if !strings.Contains(respBody, "function_call") {
+		t.Error("应包含 function_call")
+	}
+	if !strings.Contains(respBody, "bash") {
+		t.Error("应包含工具名 bash")
+	}
+	if !strings.Contains(respBody, "event: response.function_call_arguments.delta") {
+		t.Error("应包含 response.function_call_arguments.delta")
+	}
+	if !strings.Contains(respBody, "event: response.function_call_arguments.done") {
+		t.Error("应包含 response.function_call_arguments.done")
+	}
+	if !strings.Contains(respBody, "event: response.completed") {
+		t.Error("应包含 response.completed")
+	}
+}
+
+func TestHandleResponses_StreamFinishLength(t *testing.T) {
+	// 测试 finish_reason=length 时 Codex 流式响应的 status
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+
+		fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","input":"hello","stream":true,"max_output_tokens":5}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleResponses(w, req)
+
+	respBody := w.Body.String()
+	if !strings.Contains(respBody, `"status":"incomplete"`) {
+		t.Error("finish_reason=length 时 status 应为 incomplete")
 	}
 }
 
