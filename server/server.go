@@ -29,6 +29,7 @@ func New(cfg *config.Config) *Server {
 	mux.HandleFunc("/v1/messages", p.HandleMessages)
 	mux.HandleFunc("/v1/messages/count_tokens", p.HandleMessagesCountTokens)
 	mux.HandleFunc("/v1/responses", p.HandleResponses)
+	mux.HandleFunc("/v1/models", p.HandleModels)
 
 	// 二期 Ollama 端点，一期返回 501
 	mux.HandleFunc("/api/chat", p.HandleNotImplemented)
@@ -39,6 +40,12 @@ func New(cfg *config.Config) *Server {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// 捕获未匹配的路由
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		slog.Warn("未匹配的路由", "method", r.Method, "path", r.URL.Path)
+		http.NotFound(w, r)
 	})
 
 	return &Server{

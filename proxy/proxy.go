@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agr/config"
+	"agr/models"
 	"agr/router"
 	"agr/transformer"
 	"agr/transformer/openai"
@@ -93,6 +94,19 @@ func (p *Proxy) HandleNotImplemented(w http.ResponseWriter, r *http.Request) {
 			"message": "Ollama compatibility is planned for phase 2.",
 		},
 	})
+}
+
+// HandleModels 处理 /v1/models 请求，返回模型元数据列表
+func (p *Proxy) HandleModels(w http.ResponseWriter, r *http.Request) {
+	resp, err := models.LoadModels(p.cfg)
+	if err != nil {
+		slog.Error("加载模型列表失败", "error", err)
+		p.writeError(w, http.StatusInternalServerError, "加载模型列表失败: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // handleProxy 通用代理处理逻辑
