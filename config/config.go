@@ -18,19 +18,19 @@ type Config struct {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Port     int    `mapstructure:"port"`
-	LogLevel string `mapstructure:"log_level"`
-	PIDFile  string `mapstructure:"pid_file"`
+	Port         int    `mapstructure:"port"`
+	LogLevel     string `mapstructure:"log_level"`
+	PIDFile      string `mapstructure:"pid_file"`
+	ModelsConfig string `mapstructure:"models_config"`
 }
 
 // Provider 上游供应商配置
 type Provider struct {
-	Name         string   `mapstructure:"name"`
-	APIBaseURL   string   `mapstructure:"api_base_url"`
-	APIKey       string   `mapstructure:"api_key"`
-	Models       []string `mapstructure:"models"`
-	Transformer  []string `mapstructure:"transformer"`
-	ModelsConfig string   `mapstructure:"models_config"`
+	Name        string   `mapstructure:"name"`
+	APIBaseURL  string   `mapstructure:"api_base_url"`
+	APIKey      string   `mapstructure:"api_key"`
+	Models      []string `mapstructure:"models"`
+	Transformer []string `mapstructure:"transformer"`
 }
 
 // Load 加载并校验配置文件
