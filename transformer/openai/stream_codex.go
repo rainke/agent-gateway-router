@@ -24,10 +24,14 @@ type CodexStreamState struct {
 	// Token 使用统计
 	InputTokens  int
 	OutputTokens int
+	HasUsage     bool // 是否已收到 usage 数据
 	// 序列号
 	SequenceNumber int
 	// function call 相关
 	FunctionCalls []CodexFunctionCall
+	// 流结束状态（延迟发送 response.completed 以等待 usage）
+	Finished     bool
+	FinishStatus string
 }
 
 // CodexFunctionCall 跟踪流式 function call 的状态
@@ -65,10 +69,20 @@ func (t *Transformer) transformToCodexStreamChunk(ctx context.Context, chunk []b
 		if ct, ok := usage["completion_tokens"].(float64); ok {
 			state.OutputTokens = int(ct)
 		}
+		state.HasUsage = true
 	}
 
 	choices, ok := data["choices"].([]any)
 	if !ok || len(choices) == 0 {
+		// 很多 provider 在 finish_reason 之后单独发送一个只有 usage 的 chunk（choices 为空）
+		// 如果流已经结束且刚收到 usage，立即发送 response.completed
+		if state.Finished && state.HasUsage {
+			state.SequenceNumber++
+			completed := t.buildCodexCompletedEvent(state, state.FinishStatus)
+			events = append(events, mustMarshal(completed))
+			state.Finished = false // 防止重复发送
+			return events, nil
+		}
 		return nil, nil
 	}
 
@@ -269,10 +283,16 @@ func (t *Transformer) handleCodexFinish(state *CodexStreamState, finishReason st
 		status = "failed"
 	}
 
-	// 发送 response.completed
-	state.SequenceNumber++
-	completed := t.buildCodexCompletedEvent(state, status)
-	events = append(events, mustMarshal(completed))
+	// 如果已经有 usage 数据（usage 和 finish_reason 在同一个 chunk），立即发送 completed
+	// 否则标记为 Finished，等待后续 usage chunk 到达后再发送
+	if state.HasUsage {
+		state.SequenceNumber++
+		completed := t.buildCodexCompletedEvent(state, status)
+		events = append(events, mustMarshal(completed))
+	} else {
+		state.Finished = true
+		state.FinishStatus = status
+	}
 
 	return events
 }
@@ -443,4 +463,53 @@ func BuildCodexInProgressEvent(state *CodexStreamState) map[string]any {
 func mustMarshal(v any) []byte {
 	data, _ := json.Marshal(v)
 	return data
+}
+
+// BuildCodexFinalCompletedEvent 构建最终的 response.completed 事件（供 proxy 层兜底调用）
+func BuildCodexFinalCompletedEvent(state *CodexStreamState) map[string]any {
+	// 构建 output 数组
+	var output []map[string]any
+
+	// 如果有文本内容
+	if state.AccumulatedText != "" {
+		output = append(output, map[string]any{
+			"type":   "message",
+			"role":   "assistant",
+			"status": "completed",
+			"content": []map[string]any{
+				{"type": "output_text", "text": state.AccumulatedText},
+			},
+		})
+	}
+
+	// 如果有 function calls
+	for _, fc := range state.FunctionCalls {
+		if fc.CallID != "" {
+			output = append(output, map[string]any{
+				"type":      "function_call",
+				"id":        fc.CallID,
+				"call_id":   fc.CallID,
+				"name":      fc.Name,
+				"arguments": fc.Arguments,
+				"status":    "completed",
+			})
+		}
+	}
+
+	return map[string]any{
+		"type":            "response.completed",
+		"sequence_number": state.SequenceNumber,
+		"response": map[string]any{
+			"id":     state.ResponseID,
+			"object": "response",
+			"model":  state.Model,
+			"output": output,
+			"status": state.FinishStatus,
+			"usage": map[string]any{
+				"input_tokens":  state.InputTokens,
+				"output_tokens": state.OutputTokens,
+				"total_tokens":  state.InputTokens + state.OutputTokens,
+			},
+		},
+	}
 }
