@@ -302,6 +302,9 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 			continue
 		}
 
+		// 记录转换后的 SSE chunk
+		slog.Debug("转换后的 SSE chunk (claude)", "data", string(transformed))
+
 		// 检查返回的是单个事件还是事件数组
 		transformedStr := string(transformed)
 		if strings.HasPrefix(transformedStr, "[") {
@@ -460,6 +463,7 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 			if eventType == "" {
 				continue
 			}
+			slog.Debug("转换后的 SSE chunk (codex)", "event", eventType, "data", string(eventData))
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, eventData)
 			flusher.Flush()
 		}
@@ -538,6 +542,7 @@ func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter,
 			continue
 		}
 
+		slog.Debug("转换后的 SSE chunk (generic)", "data", string(transformed))
 		fmt.Fprintf(w, "data: %s\n\n", string(transformed))
 		flusher.Flush()
 	}
