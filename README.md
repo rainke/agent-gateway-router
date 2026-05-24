@@ -64,6 +64,7 @@ go run . restart -c config.toml
 port = 9999
 log_level = "debug"
 pid_file = "~/.agr/agr.pid"
+models_config = "models_config.json"
 
 [[providers]]
 name = "deepseek"
@@ -73,16 +74,40 @@ models = ["deepseek-chat", "deepseek-coder"]
 transformer = ["openai", "deepseek"]
 
 [[providers]]
-name = "eaichat"
-api_base_url = "https://eaichat.ctyun.cn/ai/platform/v2/cp/chat/completions"
+name = "opencode-go"
+api_base_url = "https://opencode.ai/zen/go/v1/chat/completions"
 api_key = "sk-xxx"
-models = ["glm-5-oc"]
+models = ["glm-5.1"]
 transformer = ["openai"]
 
 [router]
 default = "deepseek,deepseek-chat"
-"claude-3-5-sonnet" = "eaichat,glm-5-oc"
+"glm-5.1" = "opencode-go,glm-5.1"
 ```
+
+### models_config
+
+Codex (OpenAI Responses API client) calls `/v1/models` on startup to discover available models and their capabilities. Unlike Claude Code, which only needs a model name to send requests, Codex relies on rich model metadata to populate its UI — including reasoning levels, input modalities, context window size, verbosity controls, and tool support flags.
+
+If `models_config` is not set, agr auto-generates model entries from the router configuration with reasonable defaults. However, these defaults may not match the actual upstream model capabilities (e.g., an upstream model may not support image input or all reasoning levels). A custom `models_config.json` lets you provide accurate per-model metadata so Codex displays the correct controls and avoids sending unsupported options.
+
+Example `models_config.json`:
+
+```json
+{
+  "models": [
+    {
+      "slug": "glm-5",
+      "display_name": "GLM-5-OC",
+      "context_window": 204800,
+      "input_modalities": ["text"],
+      "supported_reasoning_levels": ["low", "medium", "high"]
+    }
+  ]
+}
+```
+
+Place the file at `~/.agr/models_config.json` (or configure a custom path via `server.models_config`). See `models/models.go` for the full list of supported fields.
 
 ### Router Mapping
 
