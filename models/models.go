@@ -33,7 +33,7 @@ type ModelInfo struct {
 	Upgrade                       *ModelInfoUpgrade       `json:"upgrade,omitempty"`
 	BaseInstructions              string                  `json:"base_instructions"`
 	ModelMessages                 *ModelMessages          `json:"model_messages,omitempty"`
-	SupportsReasoningSummaries    bool                    `json:"supports_reasoning_summaries"`
+	SupportsReasoningSummaries    *bool                   `json:"supports_reasoning_summaries"`
 	DefaultReasoningSummary       ReasoningSummary        `json:"default_reasoning_summary"`
 	SupportVerbosity              bool                    `json:"support_verbosity"`
 	DefaultVerbosity              *Verbosity              `json:"default_verbosity,omitempty"`
@@ -246,6 +246,12 @@ func applyDefaults(m *ModelInfo) {
 		m.EffectiveContextWindowPercent = 95
 	}
 
+	// supports_reasoning_summaries: 如果未设置（nil），默认 true
+	if m.SupportsReasoningSummaries == nil {
+		t := true
+		m.SupportsReasoningSummaries = &t
+	}
+
 	// default_reasoning_summary: 如果为空，默认 concise
 	if m.DefaultReasoningSummary == "" {
 		m.DefaultReasoningSummary = ReasoningSummaryConcise
@@ -314,6 +320,7 @@ func buildDefaultModelInfo(slug string) ModelInfo {
 	defaultMaxContextWindow := int64(200000)
 	defaultAutoCompactLimit := int64(160000)
 	high := ReasoningEffortHigh
+	supportsReasoningSummaries := true
 
 	return ModelInfo{
 		Slug:                  slug,
@@ -330,7 +337,7 @@ func buildDefaultModelInfo(slug string) ModelInfo {
 		SupportedInAPI:                true,
 		Priority:                      0,
 		BaseInstructions:              "",
-		SupportsReasoningSummaries:    true,
+		SupportsReasoningSummaries:    &supportsReasoningSummaries,
 		DefaultReasoningSummary:       ReasoningSummaryConcise,
 		SupportVerbosity:              false,
 		WebSearchToolType:             WebSearchToolTypeText,
