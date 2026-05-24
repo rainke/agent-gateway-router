@@ -85,6 +85,13 @@ func (t *Transformer) transformCodexRequest(body []byte, upstreamModel string) (
 		transformed["parallel_tool_calls"] = ptc
 	}
 
+	// 转发 reasoning（effort / summary）
+	if reasoning, ok := req["reasoning"].(map[string]any); ok {
+		if effort, ok := reasoning["effort"].(string); ok {
+			transformed["reasoning_effort"] = effort
+		}
+	}
+
 	result, err := json.Marshal(transformed)
 	if err != nil {
 		return nil, fmt.Errorf("序列化转换后的请求失败: %w", err)
