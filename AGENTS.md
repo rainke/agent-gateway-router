@@ -13,6 +13,8 @@
 - `go run . start -d` starts it as a daemon.
 - `go run . stop` stops the daemon.
 
+macOS users may need `xattr -d com.apple.quarantine agr` to remove Gatekeeper quarantine.
+
 ## Coding Style & Naming Conventions
 
 Use standard Go style: tabs from `gofmt`, short package names, exported identifiers only for public package APIs, and clear error wrapping with `%w`. Keep package boundaries small and practical; place routing logic in `router`, protocol adaptation in `transformer`, and process concerns in `process`. Run `gofmt` on changed Go files before submitting.

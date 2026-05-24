@@ -35,26 +35,58 @@ AI 客户端 (Claude Code / Codex / Copilot)
 - **守护进程管理** — `start`、`stop`、`restart` 命令，支持 PID 文件和优雅关闭（进行中的流有 30 秒超时）
 - **TOML 配置** — 单一配置文件，启动时进行验证
 
+## 安装
+
+从 [最新发布版本](https://github.com/rainke/agent-gateway-router/releases/latest) 下载对应平台的二进制文件：
+
+```bash
+# macOS / Linux
+chmod +x agr-*
+sudo mv agr-* /usr/local/bin/agr
+
+# macOS：如果被 Gatekeeper 拦截，移除隔离属性
+xattr -d com.apple.quarantine /usr/local/bin/agr
+```
+
+然后创建配置文件：
+
+```bash
+mkdir -p ~/.agr
+cat > ~/.agr/config.toml << 'EOF'
+[server]
+port = 9999
+log_level = "info"
+pid_file = "~/.agr/agr.pid"
+
+[[providers]]
+name = "my-provider"
+api_base_url = "https://api.example.com/v1/chat/completions"
+api_key = "sk-xxx"
+models = ["model-a"]
+transformer = ["openai"]
+
+[router]
+default = "my-provider,model-a"
+EOF
+```
+
 ## 快速开始
 
 ```bash
-# 构建
-go build -o agr .
-
 # 前台启动（默认使用 ~/.agr/config.toml）
-go run . start
+agr start
 
 # 作为守护进程启动
-go run . start -d
+agr start -d
 
 # 覆盖端口
-go run . start -p 9998
+agr start -p 9998
 
 # 停止守护进程
-go run . stop
+agr stop
 
 # 重启
-go run . restart
+agr restart
 ```
 
 ## 配置

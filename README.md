@@ -37,26 +37,58 @@ When a client sends a request, agr extracts the model name, routes it to the con
 - **Daemon Management** — `start`, `stop`, `restart` commands with PID file and graceful shutdown (30s timeout for in-flight streams)
 - **TOML Configuration** — Single config file with validation at startup
 
+## Installation
+
+Download the binary for your platform from the [latest release](https://github.com/rainke/agent-gateway-router/releases/latest):
+
+```bash
+# macOS / Linux
+chmod +x agr-*
+sudo mv agr-* /usr/local/bin/agr
+
+# macOS: remove quarantine attribute if blocked by Gatekeeper
+xattr -d com.apple.quarantine /usr/local/bin/agr
+```
+
+Then create the config file:
+
+```bash
+mkdir -p ~/.agr
+cat > ~/.agr/config.toml << 'EOF'
+[server]
+port = 9999
+log_level = "info"
+pid_file = "~/.agr/agr.pid"
+
+[[providers]]
+name = "my-provider"
+api_base_url = "https://api.example.com/v1/chat/completions"
+api_key = "sk-xxx"
+models = ["model-a"]
+transformer = ["openai"]
+
+[router]
+default = "my-provider,model-a"
+EOF
+```
+
 ## Quick Start
 
 ```bash
-# Build
-go build -o agr .
-
 # Start foreground (uses ~/.agr/config.toml by default)
-go run . start
+agr start
 
 # Start as daemon
-go run . start -d
+agr start -d
 
 # Override port
-go run . start -p 9998
+agr start -p 9998
 
 # Stop daemon
-go run . stop
+agr stop
 
 # Restart
-go run . restart
+agr restart
 ```
 
 ## Configuration
