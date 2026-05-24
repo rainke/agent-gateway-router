@@ -67,6 +67,17 @@ func (t *Transformer) transformClaudeRequest(body []byte, upstreamModel string) 
 		transformed["tool_choice"] = t.ConvertClaudeToolChoice(toolChoice)
 	}
 
+	// 转换 thinking / reasoning_effort
+	// Anthropic API: top-level "reasoning_effort" 或 "thinking.budget_tokens"
+	// OpenAI compatible: "reasoning_effort"
+	if reasoningEffort, ok := req["reasoning_effort"]; ok {
+		transformed["reasoning_effort"] = reasoningEffort
+	} else if outputConfig, ok := req["output_config"].(map[string]any); ok {
+		if effort, ok := outputConfig["effort"]; ok {
+			transformed["reasoning_effort"] = effort
+		}
+	}
+
 	// 转换其他参数
 	if maxTokens, ok := req["max_tokens"]; ok {
 		transformed["max_tokens"] = maxTokens

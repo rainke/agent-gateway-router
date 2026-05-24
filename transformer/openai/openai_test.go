@@ -937,6 +937,103 @@ func TestExtractToolResultContent(t *testing.T) {
 	}
 }
 
+func TestTransformClaudeRequest_ReasoningEffort_TopLevel(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/messages", "real-model", "")
+
+	body := []byte(`{
+		"model": "claude-3",
+		"messages": [{"role": "user", "content": "hello"}],
+		"max_tokens": 100,
+		"reasoning_effort": "high"
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	if parsed["reasoning_effort"] != "high" {
+		t.Errorf("reasoning_effort 应为 high，实际 %v", parsed["reasoning_effort"])
+	}
+}
+
+func TestTransformClaudeRequest_ReasoningEffort_OutputConfig(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/messages", "real-model", "")
+
+	body := []byte(`{
+		"model": "claude-3",
+		"messages": [{"role": "user", "content": "hello"}],
+		"max_tokens": 100,
+		"output_config": {"effort": "medium"}
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	if parsed["reasoning_effort"] != "medium" {
+		t.Errorf("output_config.effort 应映射为 reasoning_effort=medium，实际 %v", parsed["reasoning_effort"])
+	}
+}
+
+func TestTransformClaudeRequest_ReasoningEffort_TopLevelTakesPrecedence(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/messages", "real-model", "")
+
+	body := []byte(`{
+		"model": "claude-3",
+		"messages": [{"role": "user", "content": "hello"}],
+		"max_tokens": 100,
+		"reasoning_effort": "high",
+		"output_config": {"effort": "low"}
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	// 顶层 reasoning_effort 优先于 output_config.effort
+	if parsed["reasoning_effort"] != "high" {
+		t.Errorf("顶层 reasoning_effort 应优先，实际 %v", parsed["reasoning_effort"])
+	}
+}
+
+func TestTransformClaudeRequest_NoReasoningEffort(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/messages", "real-model", "")
+
+	body := []byte(`{
+		"model": "claude-3",
+		"messages": [{"role": "user", "content": "hello"}],
+		"max_tokens": 100
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	if _, ok := parsed["reasoning_effort"]; ok {
+		t.Error("没有 reasoning_effort 时不应设置该字段")
+	}
+}
+
 func TestTransformClaudeRequest_TopP(t *testing.T) {
 	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "real-model", "")
