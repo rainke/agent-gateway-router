@@ -2,16 +2,16 @@
 
 ## Project Structure & Module Organization
 
-`agr` is a Go CLI and local HTTP gateway. The entry point is `main.go`, which delegates to Cobra commands in `cmd/`. Core packages are organized by responsibility: `config/` loads and validates TOML config, `process/` manages PID files and lifecycle signals, `server/` owns the HTTP server, `router/` resolves client models to providers, `proxy/` forwards requests, and `transformer/` adapts request/response formats. Tests live beside their packages as `*_test.go`. `config.toml` is the local runtime example; avoid committing real provider credentials.
+`agr` is a Go CLI and local HTTP gateway. The entry point is `main.go`, which delegates to Cobra commands in `cmd/`. Core packages are organized by responsibility: `config/` loads and validates TOML config, `process/` manages PID files and lifecycle signals, `server/` owns the HTTP server, `router/` resolves client models to providers, `proxy/` forwards requests, and `transformer/` adapts request/response formats. Tests live beside their packages as `*_test.go`. The default config path is `~/.agr/config.toml`; avoid committing real provider credentials.
 
 ## Build, Test, and Development Commands
 
 - `go test ./...` runs the full unit test suite.
 - `go test ./transformer -run TestName` runs a focused package test.
 - `go build -o agr .` builds the CLI binary in the repository root.
-- `go run . start -c config.toml` starts the gateway in the foreground.
-- `go run . start -c config.toml -p 9999 -d` starts it as a daemon with a port override.
-- `go run . stop -c config.toml` stops the daemon using the configured PID file.
+- `go run . start` starts the gateway using `~/.agr/config.toml`.
+- `go run . start -d` starts it as a daemon.
+- `go run . stop` stops the daemon.
 
 ## Coding Style & Naming Conventions
 

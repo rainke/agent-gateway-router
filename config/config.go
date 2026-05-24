@@ -41,10 +41,11 @@ func Load(configPath string) (*Config, error) {
 	if configPath != "" {
 		v.SetConfigFile(expandPath(configPath))
 	} else {
-		// 默认搜索路径
-		v.SetConfigName("config")
-		v.AddConfigPath(".")
-		v.AddConfigPath("$HOME/.agr")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("获取用户目录失败: %w", err)
+		}
+		v.SetConfigFile(filepath.Join(home, ".agr", "config.toml"))
 	}
 
 	if err := v.ReadInConfig(); err != nil {

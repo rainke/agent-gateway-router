@@ -41,20 +41,20 @@ AI 客户端 (Claude Code / Codex / Copilot)
 # 构建
 go build -o agr .
 
-# 前台启动
-go run . start -c config.toml
+# 前台启动（默认使用 ~/.agr/config.toml）
+go run . start
 
 # 作为守护进程启动
-go run . start -c config.toml -d
+go run . start -d
 
 # 覆盖端口
-go run . start -c config.toml -p 9998
+go run . start -p 9998
 
 # 停止守护进程
-go run . stop -c config.toml
+go run . stop
 
 # 重启
-go run . restart -c config.toml
+go run . restart
 ```
 
 ## 配置

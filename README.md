@@ -43,20 +43,20 @@ When a client sends a request, agr extracts the model name, routes it to the con
 # Build
 go build -o agr .
 
-# Start foreground
-go run . start -c config.toml
+# Start foreground (uses ~/.agr/config.toml by default)
+go run . start
 
 # Start as daemon
-go run . start -c config.toml -d
+go run . start -d
 
 # Override port
-go run . start -c config.toml -p 9998
+go run . start -p 9998
 
 # Stop daemon
-go run . stop -c config.toml
+go run . stop
 
 # Restart
-go run . restart -c config.toml
+go run . restart
 ```
 
 ## Configuration
