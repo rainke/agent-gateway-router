@@ -8,6 +8,9 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 jobs:
   # 测试作业 - 在 push 和 PR 时运行
   test:
