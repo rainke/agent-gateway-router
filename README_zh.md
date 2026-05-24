@@ -64,6 +64,7 @@ go run . restart -c config.toml
 port = 9999
 log_level = "debug"
 pid_file = "~/.agr/agr.pid"
+models_config = "models_config.json"
 
 [[providers]]
 name = "deepseek"
@@ -73,16 +74,40 @@ models = ["deepseek-chat", "deepseek-coder"]
 transformer = ["openai", "deepseek"]
 
 [[providers]]
-name = "eaichat"
-api_base_url = "https://eaichat.ctyun.cn/ai/platform/v2/cp/chat/completions"
+name = "opencode-go"
+api_base_url = "https://opencode.ai/zen/go/v1/chat/completions"
 api_key = "sk-xxx"
-models = ["glm-5-oc"]
+models = ["glm-5.1"]
 transformer = ["openai"]
 
 [router]
 default = "deepseek,deepseek-chat"
-"claude-3-5-sonnet" = "eaichat,glm-5-oc"
+"glm-5.1" = "opencode-go,glm-5.1"
 ```
+
+### models_config
+
+Codex（OpenAI Responses API 客户端）在启动时调用 `/v1/models` 来发现可用模型及其能力。与 Claude Code 不同，Claude Code 只需要模型名称即可发送请求，而 Codex 依赖丰富的模型元数据来填充其 UI —— 包括推理级别、输入模态、上下文窗口大小、详细度控制和工具支持标志。
+
+如果未设置 `models_config`，agr 会根据路由配置自动生成模型条目，使用合理的默认值。然而，这些默认值可能与实际上游模型能力不匹配（例如，上游模型可能不支持图像输入或所有推理级别）。自定义 `models_config.json` 让您提供准确的逐模型元数据，使 Codex 显示正确的控件并避免发送不支持的选项。
+
+示例 `models_config.json`：
+
+```json
+{
+  "models": [
+    {
+      "slug": "glm-5",
+      "display_name": "GLM-5-OC",
+      "context_window": 204800,
+      "input_modalities": ["text"],
+      "supported_reasoning_levels": ["low", "medium", "high"]
+    }
+  ]
+}
+```
+
+将文件放在 `~/.agr/models_config.json`（或通过 `server.models_config` 配置自定义路径）。完整字段列表见 `models/models.go`。
 
 ### 路由映射
 
