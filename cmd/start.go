@@ -6,9 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"agr/config"
@@ -90,10 +88,8 @@ func startDaemon() error {
 	cmd.Stderr = nil
 	cmd.Stdin = nil
 
-	// 使子进程脱离当前进程组
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	// 使子进程脱离当前进程组（平台特定设置在 daemon_*.go 中）
+	cmd.SysProcAttr = daemonProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动后台进程失败: %w", err)
@@ -130,7 +126,7 @@ func runServer() error {
 
 	// 监听系统信号
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	notifyShutdownSignals(sigCh)
 
 	// 启动服务
 	errCh := make(chan error, 1)
