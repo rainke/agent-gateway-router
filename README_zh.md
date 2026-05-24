@@ -37,10 +37,15 @@ AI 客户端 (Claude Code / Codex / Copilot)
 
 ## 安装
 
-从 [最新发布版本](https://github.com/rainke/agent-gateway-router/releases/latest) 下载对应平台的二进制文件：
+一行安装（macOS / Linux）：
 
 ```bash
-# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/rainke/agent-gateway-router/main/install.sh | sh
+```
+
+或从 [最新发布版本](https://github.com/rainke/agent-gateway-router/releases/latest) 手动下载二进制文件：
+
+```bash
 chmod +x agr-*
 sudo mv agr-* /usr/local/bin/agr
 

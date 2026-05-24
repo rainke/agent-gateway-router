@@ -39,10 +39,15 @@ When a client sends a request, agr extracts the model name, routes it to the con
 
 ## Installation
 
-Download the binary for your platform from the [latest release](https://github.com/rainke/agent-gateway-router/releases/latest):
+One-line install (macOS / Linux):
 
 ```bash
-# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/rainke/agent-gateway-router/main/install.sh | sh
+```
+
+Or download the binary manually from the [latest release](https://github.com/rainke/agent-gateway-router/releases/latest):
+
+```bash
 chmod +x agr-*
 sudo mv agr-* /usr/local/bin/agr
 
