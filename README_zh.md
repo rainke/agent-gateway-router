@@ -167,14 +167,5 @@ gofmt -l -w .
 ```
 
 ## 许可证
- 
- ## 路线图
- 
- | 上游 API | Claude Code | Codex | VS Code Copilot |
- |----------|:-----------:|:-----:|:---------------:|
- | OpenAI `/v1/chat/completions` | ✅ | ✅ | 🔲 |
- | Anthropic `/v1/messages` | — | 🔲 | 🔲 |
- 
- > **说明：** Claude Code 原生使用 Anthropic `/v1/messages` API，因此无需将其列为该上游的客户端目标。
 
-MIT
+MIT 许可证。详见 [LICENSE](LICENSE)。

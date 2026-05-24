@@ -2,6 +2,8 @@
 
 **agr** is a lightweight local Agent gateway proxy written in Go. It runs as a background daemon and sits between local AI clients (Claude Code, Codex, VS Code Copilot) and upstream LLM providers, handling protocol adaptation, model routing, streaming response forwarding, and request/response transformation.
 
+[中文文档](README_zh.md)
+
 ## Architecture
 
 ```
@@ -167,14 +169,5 @@ gofmt -l -w .
 ```
 
 ## License
- 
- ## Roadmap
- 
- | Upstream API | Claude Code | Codex | VS Code Copilot |
- |--------------|:-----------:|:-----:|:---------------:|
- | OpenAI `/v1/chat/completions` | ✅ | ✅ | 🔲 |
- | Anthropic `/v1/messages` | — | 🔲 | 🔲 |
- 
- > **Note:** Claude Code natively uses the Anthropic `/v1/messages` API, so it does not need to be listed as a client target for that upstream.
 
-MIT
+MIT License. See [LICENSE](LICENSE) for details.
