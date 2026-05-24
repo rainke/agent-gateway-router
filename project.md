@@ -2,7 +2,7 @@
 
 ## 一、需求概述
 
-agr（AI Gateway Router）是一个基于 Go 语言开发的轻量级本地 CLI 运维网关。它常驻本地后台，面向 Claude Code、Codex、VS Code Copilot 等本地 AI 客户端，统一处理它们与多种后端大模型供应商之间的协议适配、模型路由、流式响应转发和请求响应拦截。
+agr（Agent Gateway Router）是一个基于 Go 语言开发的轻量级本地 CLI 运维网关。它常驻本地后台，面向 Claude Code、Codex、VS Code Copilot 等本地 AI 客户端，统一处理它们与多种后端大模型供应商之间的协议适配、模型路由、流式响应转发和请求响应拦截。
 
 本方案采用分期交付：
 

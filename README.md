@@ -1,6 +1,6 @@
-# agr — AI Gateway Router
+# agr — Agent Gateway Router
 
-**agr** is a lightweight local AI gateway proxy written in Go. It runs as a background daemon and sits between local AI clients (Claude Code, Codex, VS Code Copilot) and upstream LLM providers, handling protocol adaptation, model routing, streaming response forwarding, and request/response transformation.
+**agr** is a lightweight local Agent gateway proxy written in Go. It runs as a background daemon and sits between local AI clients (Claude Code, Codex, VS Code Copilot) and upstream LLM providers, handling protocol adaptation, model routing, streaming response forwarding, and request/response transformation.
 
 ## Architecture
 
