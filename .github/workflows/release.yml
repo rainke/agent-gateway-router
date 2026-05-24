@@ -60,7 +60,11 @@ jobs:
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -v -o agr-${GOOS}-${GOARCH}${ext} .
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="$(git rev-parse HEAD)"
+          DATE="$(date -u +%Y-%m-%d)"
+          LDFLAGS="-s -w -X agr/version.Version=${VERSION} -X agr/version.Commit=${COMMIT} -X agr/version.Date=${DATE}"
+          go build -v -ldflags "${LDFLAGS}" -o agr-${GOOS}-${GOARCH}${ext} .
           echo "artifact=agr-${GOOS}-${GOARCH}${ext}" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
