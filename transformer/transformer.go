@@ -89,8 +89,10 @@ func (c *Chain) TransformCodexStream(ctx context.Context, chunk []byte) ([][]byt
 
 // registry 内置 Transformer 注册表
 var registry = map[string]func() Transformer{
-	"openai":   func() Transformer { return &openai.Transformer{} },
-	"deepseek": func() Transformer { return &DeepSeekTransformer{} },
+	"openai":           func() Transformer { return &openai.Transformer{} },
+	"deepseek":         func() Transformer { return &DeepSeekTransformer{} },
+	"anthropic":        func() Transformer { return &AnthropicTransformer{} },
+	"openai-responses": func() Transformer { return &OpenAIResponsesTransformer{} },
 }
 
 // Get 根据名称获取 Transformer 实例

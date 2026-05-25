@@ -138,8 +138,10 @@ func validate(cfg *Config) error {
 func IsValidTransformer(name string) bool {
 	// 内置 Transformer 注册表
 	registry := map[string]bool{
-		"openai":   true,
-		"deepseek": true,
+		"openai":           true,
+		"deepseek":         true,
+		"anthropic":        true,
+		"openai-responses": true,
 	}
 	return registry[name]
 }

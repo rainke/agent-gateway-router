@@ -27,6 +27,21 @@ Use Go’s built-in `testing` package. Add tests next to the package under test 
 
 Recent history uses Conventional Commit prefixes, for example `feat: initial commit...` and `test: add unit tests...`. Continue with `feat:`, `fix:`, `test:`, `refactor:`, or `docs:` followed by a concise imperative summary. Pull requests should describe the behavior change, list test commands run, link related issues when present, and include sample config or request/response snippets for protocol changes.
 
+## Transformer Architecture
+
+The `transformer/` package uses a Chain-of-Responsibility pattern. Each provider config lists an ordered array of transformer names (e.g. `["anthropic", "openai", "deepseek"]`). `transformer.NewChain(names)` resolves them from a registry and executes them in sequence for requests (forward order) and in reverse for responses/streaming (unwind order).
+
+**Interface** — `Transformer` has three methods: `TransformRequest`, `TransformResponse`, `TransformStream`. `CodexStreamTransformer` extends it with `TransformCodexStream` for Responses API SSE events that may map one upstream chunk to multiple downstream events.
+
+**Built-in transformers:**
+
+- `openai` — Core protocol converter. Routes by `RequestPathKey` in context: `/v1/messages` → Anthropic Messages ↔ OpenAI Chat Completions, `/v1/responses` → OpenAI Responses ↔ Chat Completions, other paths → passthrough.
+- `deepseek` — Injects `thinking: {type: "disabled"}` for non-Claude requests; extracts Claude thinking blocks into `reasoning_content` for Claude requests so DeepSeek preserves them.
+- `anthropic` — Blocks Codex (Responses API) requests with an error; passes Claude (Messages API) requests through. Use it on providers that only serve Anthropic clients.
+- `openai-responses` — The inverse: blocks Claude (Messages API) requests; passes Codex (Responses API) requests through. Use it on providers that only serve Codex clients.
+
+**Adding a new transformer** — Create a struct in `transformer/` implementing the `Transformer` interface, register its factory in `registry` (`transformer.go`), and add its name to `IsValidTransformer` (`config/config.go`). If it produces multiple SSE events per chunk, also implement `CodexStreamTransformer`.
+
 ## Security & Configuration Tips
 
 Treat `api_key` values in TOML as secrets. Use local-only config files or redacted examples when documenting providers. Do not log full authorization headers or upstream response bodies that may contain sensitive data.
