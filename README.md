@@ -1,13 +1,14 @@
-# agr — Agent Gateway Router
+# agr — AI 网关路由器
 
-**agr** is a lightweight local Agent gateway proxy written in Go. It runs as a background daemon and sits between local AI clients (Claude Code, Codex, VS Code Copilot) and upstream LLM providers, handling protocol adaptation, model routing, streaming response forwarding, and request/response transformation.
+> **⚠️ 项目处于早期开发阶段**
+> 当前版本功能尚不完善，部分功能（如 codex reasoning 兼容/ compact / Ollama 相关接口）尚未实现，配置项和 API 可能随时变更。请谨慎用于生产环境，欢迎提交 Issue 和 PR 参与贡献。
 
-[中文文档](README_zh.md)
+**agr** 是一个用 Go 编写的轻量级本地 AI 网关代理。它作为后台守护进程运行，位于本地 AI 客户端（Claude Code、Codex、VS Code Copilot）和上游 LLM 提供商之间，处理协议适配、模型路由、流式响应转发以及请求/响应转换。
 
-## Architecture
+## 架构
 
 ```
-AI Client (Claude Code / Codex / Copilot)
+AI 客户端 (Claude Code / Codex / Copilot)
         │
         ▼
    localhost:9999
@@ -15,47 +16,47 @@ AI Client (Claude Code / Codex / Copilot)
    │       agr            │
    │                      │
    │  ┌──────┐ ┌───────┐  │
-   │  │Router│ │Transf.│  │
-   │  │      │ │ Chain │  │
+   │  │路由器│ │转换器│  │
+   │  │      │ │ 链   │  │
    │  └──┬───┘ └───┬───┘  │
    │     │         │      │
    └─────┼─────────┼──────┘
          │         │
          ▼         ▼
-   Provider A   Provider B   ...
+   提供商 A   提供商 B   ...
 ```
 
-When a client sends a request, agr extracts the model name, routes it to the configured upstream provider via the router, transforms the request through a configurable transformer chain, forwards it to the upstream, then transforms and streams the response back to the client.
+当客户端发送请求时，agr 提取模型名称，通过路由器将其路由到配置的上游提供商，通过可配置的转换器链转换请求，将其转发到上游，然后转换响应并流式传输回客户端。
 
-## Features
+## 功能特性
 
-- **Multi-Protocol Support** — Proxy for Claude Code (`/v1/messages`) and Codex (`/v1/responses`) with protocol transformation
-- **Model Routing** — Route client-requested models to different upstream providers. Supports exact match with fallback to default
-- **Transformer Chain** — Configurable ordered pipeline of transformers (e.g., `["openai", "deepseek"]`) for request/response adaptation
-- **Streaming** — SSE streaming response forwarding with real-time per-chunk transformation
-- **DeepSeek Integration** — Specialized transformer that maps Anthropic thinking blocks to DeepSeek reasoning_content and vice versa
-- **Daemon Management** — `start`, `stop`, `restart` commands with PID file and graceful shutdown (30s timeout for in-flight streams)
-- **TOML Configuration** — Single config file with validation at startup
+- **多协议支持** — 代理 Claude Code（`/v1/messages`）和 Codex（`/v1/responses`）协议并进行协议转换
+- **模型路由** — 将客户端请求的模型路由到不同的上游提供商。支持精确匹配并回退到默认值
+- **转换器链** — 可配置的有序转换器管道（例如 `["openai", "deepseek"]`）用于请求/响应适配
+- **流式传输** — SSE 流式响应转发，支持实时逐块转换
+- **DeepSeek 集成** — 专用转换器，将 Anthropic thinking 块映射到 DeepSeek reasoning_content，反之亦然
+- **守护进程管理** — `start`、`stop`、`restart` 命令，支持 PID 文件和优雅关闭（进行中的流有 30 秒超时）
+- **TOML 配置** — 单一配置文件，启动时进行验证
 
-## Installation
+## 安装
 
-One-line install (macOS / Linux):
+一行安装（macOS / Linux）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rainke/agent-gateway-router/main/install.sh | sh
 ```
 
-Or download the binary manually from the [latest release](https://github.com/rainke/agent-gateway-router/releases/latest):
+或从 [最新发布版本](https://github.com/rainke/agent-gateway-router/releases/latest) 手动下载二进制文件：
 
 ```bash
 chmod +x agr-*
 sudo mv agr-* /usr/local/bin/agr
 
-# macOS: remove quarantine attribute if blocked by Gatekeeper
+# macOS：如果被 Gatekeeper 拦截，移除隔离属性
 xattr -d com.apple.quarantine /usr/local/bin/agr
 ```
 
-Then create the config file:
+然后创建配置文件：
 
 ```bash
 mkdir -p ~/.agr
@@ -77,26 +78,26 @@ default = "my-provider,model-a"
 EOF
 ```
 
-## Quick Start
+## 快速开始
 
 ```bash
-# Start foreground (uses ~/.agr/config.toml by default)
+# 前台启动（默认使用 ~/.agr/config.toml）
 agr start
 
-# Start as daemon
+# 作为守护进程启动
 agr start -d
 
-# Override port
+# 覆盖端口
 agr start -p 9998
 
-# Stop daemon
+# 停止守护进程
 agr stop
 
-# Restart
+# 重启
 agr restart
 ```
 
-## Configuration
+## 配置
 
 ```toml
 [server]
@@ -126,18 +127,18 @@ default = "deepseek,deepseek-chat"
 
 ### models_config
 
-Codex (OpenAI Responses API client) calls `/v1/models` on startup to discover available models and their capabilities. Unlike Claude Code, which only needs a model name to send requests, Codex relies on rich model metadata to populate its UI — including reasoning levels, input modalities, context window size, verbosity controls, and tool support flags.
+Codex（OpenAI Responses API 客户端）在启动时调用 `/v1/models` 来发现可用模型及其能力。与 Claude Code 不同，Claude Code 只需要模型名称即可发送请求，而 Codex 依赖丰富的模型元数据来填充其 UI —— 包括推理级别、输入模态、上下文窗口大小、详细度控制和工具支持标志。
 
-If `models_config` is not set, agr auto-generates model entries from the router configuration with reasonable defaults. However, these defaults may not match the actual upstream model capabilities (e.g., an upstream model may not support image input or all reasoning levels). A custom `models_config.json` lets you provide accurate per-model metadata so Codex displays the correct controls and avoids sending unsupported options.
+如果未设置 `models_config`，agr 会根据路由配置自动生成模型条目，使用合理的默认值。然而，这些默认值可能与实际上游模型能力不匹配（例如，上游模型可能不支持图像输入或所有推理级别）。自定义 `models_config.json` 让您提供准确的逐模型元数据，使 Codex 显示正确的控件并避免发送不支持的选项。
 
-Example `models_config.json`:
+示例 `models_config.json`：
 
 ```json
 {
   "models": [
     {
       "slug": "glm-5",
-      "display_name": "GLM-5-OC",
+      "display_name": "GLM-5",
       "context_window": 204800,
       "input_modalities": ["text"],
       "supported_reasoning_levels": ["low", "medium", "high"]
@@ -146,65 +147,65 @@ Example `models_config.json`:
 }
 ```
 
-Place the file at `~/.agr/models_config.json` (or configure a custom path via `server.models_config`). See `models/models.go` for the full list of supported fields.
+将文件放在 `~/.agr/models_config.json`（或通过 `server.models_config` 配置自定义路径）。完整字段列表见 `models/models.go`。
 
-### Router Mapping
+### 路由映射
 
-Format: `client_model = "provider_name,upstream_model"`
+格式：`client_model = "provider_name,upstream_model"`
 
-- Exact match first, then fallback to `router.default`
-- Provider and model must exist in the `[[providers]]` section
+- 先精确匹配，然后回退到 `router.default`
+- 提供商和模型必须存在于 `[[providers]]` 部分
 
-### Transformer Chain
+### 转换器链
 
-Built-in transformers:
+内置转换器：
 
-| Name | Purpose |
-|------|---------|
-| `openai` | Converts between Claude/Codex/OpenAI protocols and upstream formats |
-| `deepseek` | Handles DeepSeek-specific `reasoning_content` ↔ Anthropic thinking mapping |
+| 名称 | 用途 |
+|------|------|
+| `openai` | 在 Claude/Codex/OpenAI 协议和上游格式之间转换 |
+| `deepseek` | 处理 DeepSeek 特有的 `reasoning_content` ↔ Anthropic thinking 映射 |
 
-Transformers are executed in order for requests and reverse order for responses.
+转换器按顺序执行请求处理，按逆序执行响应处理。
 
-## Endpoints
+## 端点
 
-| Path | Client | Phase |
+| 路径 | 客户端 | 阶段 |
 |------|--------|-------|
 | `/v1/messages` | Claude Code | 1 |
 | `/v1/responses` | Codex | 1 |
-| `/api/chat` | VS Code Copilot (Ollama) | 2 (planned) |
-| `/api/generate` | VS Code Copilot (Ollama) | 2 (planned) |
-| `/api/tags` | VS Code Copilot (Ollama) | 2 (planned) |
-| `/health` | Health check | 1 |
+| `/api/chat` | VS Code Copilot (Ollama) | 2（计划中） |
+| `/api/generate` | VS Code Copilot (Ollama) | 2（计划中） |
+| `/api/tags` | VS Code Copilot (Ollama) | 2（计划中） |
+| `/health` | 健康检查 | 1 |
 
-Phase 2 endpoints return `501 Not Implemented` in the current version.
+第 2 阶段端点在当前版本中返回 `501 Not Implemented`。
 
-## Project Structure
+## 项目结构
 
 ```
-├── main.go              # Entry point
-├── cmd/                 # Cobra commands (start, stop, restart)
-├── config/              # TOML config loading and validation
-├── process/             # PID file management and process signaling
-├── server/              # HTTP server
-├── router/              # Model-to-provider routing
-├── proxy/               # Request forwarding and streaming
-└── transformer/         # Protocol adaptation transformers
+├── main.go              # 入口点
+├── cmd/                 # Cobra 命令（start、stop、restart）
+├── config/              # TOML 配置加载和验证
+├── process/             # PID 文件管理和进程信号
+├── server/              # HTTP 服务器
+├── router/              # 模型到提供商的路由
+├── proxy/               # 请求转发和流式传输
+└── transformer/         # 协议适配转换器
 ```
 
-## Development
+## 开发
 
 ```bash
-# Run tests
+# 运行测试
 go test ./...
 
-# Focused test
+# 聚焦测试
 go test ./transformer -run TestDeepSeek
 
-# Code format
+# 代码格式化
 gofmt -l -w .
 ```
 
-## License
+## 许可证
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT 许可证。详见 [LICENSE](LICENSE)。
