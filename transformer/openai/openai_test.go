@@ -11,6 +11,7 @@ func makeCtx(path, upstreamModel, clientModel string) context.Context {
 	ctx = context.WithValue(ctx, RequestPathKey, path)
 	ctx = context.WithValue(ctx, UpstreamModelKey, upstreamModel)
 	ctx = context.WithValue(ctx, ClientModelKey, clientModel)
+	ctx = context.WithValue(ctx, RequestMetadataKey, &RequestMetadata{})
 	return ctx
 }
 
@@ -41,6 +42,31 @@ func TestTransformClaudeRequest_Basic(t *testing.T) {
 	}
 	if parsed["stream"] != true {
 		t.Errorf("stream 应为 true")
+	}
+}
+
+func TestTransformClaudeRequest_ReasoningMarksMetadata(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/messages", "real-model", "client-model")
+
+	body := []byte(`{
+		"model": "claude-3",
+		"messages": [
+			{"role": "assistant", "content": [
+				{"type": "thinking", "thinking": "I should inspect the code."},
+				{"type": "text", "text": "Done"}
+			]}
+		]
+	}`)
+
+	if _, err := tr.TransformRequest(ctx, body); err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	metadata, _ := ctx.Value(RequestMetadataKey).(*RequestMetadata)
+	// x-reasoning-included 只针对 /v1/responses 接口，/v1/messages 不应标记
+	if metadata != nil && metadata.ReasoningIncluded {
+		t.Fatal("reasoning 内容不应在 /v1/messages 中标记为已包含")
 	}
 }
 
@@ -1234,5 +1260,432 @@ func TestHandleToolCallDelta_InvalidItem(t *testing.T) {
 	}
 	if result != nil {
 		t.Error("无效 item 应返回 nil")
+	}
+}
+
+// === Codex 请求转换 - Reasoning 相关测试 ===
+
+func TestTransformCodexRequest_ReasoningInputItem(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	// 模拟包含 reasoning output item 的历史输入
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What is 2+2?"}]},
+			{"type": "reasoning", "id": "rs_123", "summary": [{"type": "summary_text", "text": "Let me calculate 2+2. The answer is 4."}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "The answer is 4."}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What about 3+3?"}]}
+		],
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	// 应有: user, assistant(with reasoning_content), user
+	if len(msgs) != 3 {
+		t.Fatalf("应有 3 条消息，实际 %d", len(msgs))
+	}
+
+	// 第一条: user
+	m0 := msgs[0].(map[string]any)
+	if m0["role"] != "user" {
+		t.Errorf("msgs[0] role 应为 user，实际 %v", m0["role"])
+	}
+
+	// 第二条: assistant with reasoning_content
+	m1 := msgs[1].(map[string]any)
+	if m1["role"] != "assistant" {
+		t.Errorf("msgs[1] role 应为 assistant，实际 %v", m1["role"])
+	}
+	if m1["reasoning_content"] != "Let me calculate 2+2. The answer is 4." {
+		t.Errorf("msgs[1] reasoning_content 不正确: %v", m1["reasoning_content"])
+	}
+	if m1["content"] != "The answer is 4." {
+		t.Errorf("msgs[1] content 应为 'The answer is 4.'，实际 %v", m1["content"])
+	}
+
+	// 第三条: user
+	m2 := msgs[2].(map[string]any)
+	if m2["role"] != "user" {
+		t.Errorf("msgs[2] role 应为 user，实际 %v", m2["role"])
+	}
+}
+
+func TestTransformCodexRequest_ReasoningBeforeFunctionCall(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	// reasoning 后面跟着 function_call（而不是 message）
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "list files"}]},
+			{"type": "reasoning", "id": "rs_456", "summary": [{"type": "summary_text", "text": "I should run ls command."}]},
+			{"type": "function_call", "call_id": "call_1", "name": "bash", "arguments": "{\"command\":\"ls\"}"},
+			{"type": "function_call_output", "call_id": "call_1", "output": "file1.txt\nfile2.txt"}
+		],
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	// 应有: user, assistant(with tool_calls + reasoning_content), tool
+	if len(msgs) != 3 {
+		t.Fatalf("应有 3 条消息，实际 %d", len(msgs))
+	}
+
+	// 第二条: assistant with tool_calls and reasoning_content
+	m1 := msgs[1].(map[string]any)
+	if m1["role"] != "assistant" {
+		t.Errorf("msgs[1] role 应为 assistant，实际 %v", m1["role"])
+	}
+	if m1["reasoning_content"] != "I should run ls command." {
+		t.Errorf("msgs[1] reasoning_content 不正确: %v", m1["reasoning_content"])
+	}
+	toolCallsAny, ok := m1["tool_calls"].([]any)
+	if !ok || len(toolCallsAny) == 0 {
+		t.Fatal("msgs[1] 应包含 tool_calls")
+	}
+	tc0 := toolCallsAny[0].(map[string]any)
+	if tc0["id"] != "call_1" {
+		t.Errorf("tool_calls[0].id 应为 call_1")
+	}
+
+	// 第三条: tool
+	m2 := msgs[2].(map[string]any)
+	if m2["role"] != "tool" {
+		t.Errorf("msgs[2] role 应为 tool，实际 %v", m2["role"])
+	}
+}
+
+func TestTransformCodexRequest_ReasoningWithoutFollowingAssistant(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	// reasoning 后面直接跟 user message（边界情况）
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+			{"type": "reasoning", "id": "rs_789", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "another question"}]}
+		],
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	// 应有: user, assistant(empty content + reasoning_content), user
+	if len(msgs) != 3 {
+		t.Fatalf("应有 3 条消息，实际 %d", len(msgs))
+	}
+
+	// 第二条: assistant with reasoning_content (flushed as standalone)
+	m1 := msgs[1].(map[string]any)
+	if m1["role"] != "assistant" {
+		t.Errorf("msgs[1] role 应为 assistant，实际 %v", m1["role"])
+	}
+	if m1["reasoning_content"] != "thinking..." {
+		t.Errorf("msgs[1] reasoning_content 不正确: %v", m1["reasoning_content"])
+	}
+}
+
+func TestTransformCodexRequest_ReasoningAtEnd(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	// reasoning 在输入末尾（边界情况）
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+			{"type": "reasoning", "id": "rs_end", "summary": [{"type": "summary_text", "text": "trailing reasoning"}]}
+		],
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	// 应有: user, assistant(reasoning_content)
+	if len(msgs) != 2 {
+		t.Fatalf("应有 2 条消息，实际 %d", len(msgs))
+	}
+
+	m1 := msgs[1].(map[string]any)
+	if m1["role"] != "assistant" {
+		t.Errorf("msgs[1] role 应为 assistant")
+	}
+	if m1["reasoning_content"] != "trailing reasoning" {
+		t.Errorf("msgs[1] reasoning_content 不正确: %v", m1["reasoning_content"])
+	}
+}
+
+func TestTransformCodexRequest_ReasoningMultipleSummaryParts(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	// reasoning 有多个 summary parts
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "complex question"}]},
+			{"type": "reasoning", "id": "rs_multi", "summary": [
+				{"type": "summary_text", "text": "First thought."},
+				{"type": "summary_text", "text": "Second thought."}
+			]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "answer"}]}
+		],
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("应有 2 条消息，实际 %d", len(msgs))
+	}
+
+	m1 := msgs[1].(map[string]any)
+	if m1["reasoning_content"] != "First thought.\nSecond thought." {
+		t.Errorf("多个 summary parts 应用换行连接，实际 %v", m1["reasoning_content"])
+	}
+}
+
+func TestTransformCodexRequest_ReasoningEmptySummary(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	// reasoning 有空 summary
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+			{"type": "reasoning", "id": "rs_empty", "summary": []},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}
+		],
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	// 空 reasoning 不应添加 reasoning_content
+	if len(msgs) != 2 {
+		t.Fatalf("应有 2 条消息，实际 %d", len(msgs))
+	}
+
+	m1 := msgs[1].(map[string]any)
+	if _, hasReasoning := m1["reasoning_content"]; hasReasoning {
+		t.Error("空 summary 不应设置 reasoning_content")
+	}
+}
+
+func TestTransformCodexRequest_ReasoningEffort(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": "hello",
+		"reasoning": {"effort": "high", "summary": "auto"},
+		"stream": true
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	if parsed["reasoning_effort"] != "high" {
+		t.Errorf("reasoning_effort 应为 high，实际 %v", parsed["reasoning_effort"])
+	}
+}
+
+func TestTransformCodexRequest_ReasoningMarksMetadata(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "real-model", "")
+
+	body := []byte(`{
+		"model": "deepseek-r1",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+			{"type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}
+		]
+	}`)
+
+	if _, err := tr.TransformRequest(ctx, body); err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	metadata, _ := ctx.Value(RequestMetadataKey).(*RequestMetadata)
+	if metadata == nil || !metadata.ReasoningIncluded {
+		t.Fatal("reasoning 内容应标记为已包含")
+	}
+}
+
+// === Codex 响应转换 - Reasoning 相关测试 ===
+
+func TestTransformToCodexResponse_WithReasoning(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "", "deepseek-r1")
+
+	openaiResp := `{
+		"id": "chatcmpl-123",
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": "The answer is 4.",
+				"reasoning_content": "Let me calculate: 2+2=4"
+			},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 10, "completion_tokens": 20}
+	}`
+
+	result, err := tr.TransformResponse(ctx, []byte(openaiResp))
+	if err != nil {
+		t.Fatalf("TransformResponse 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	output := parsed["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("output 应有 2 个 item（reasoning + message），实际 %d", len(output))
+	}
+
+	// 第一个应为 reasoning
+	reasoning := output[0].(map[string]any)
+	if reasoning["type"] != "reasoning" {
+		t.Errorf("output[0].type 应为 reasoning，实际 %v", reasoning["type"])
+	}
+	summary := reasoning["summary"].([]any)
+	if len(summary) != 1 {
+		t.Fatalf("summary 应有 1 个 part，实际 %d", len(summary))
+	}
+	summaryPart := summary[0].(map[string]any)
+	if summaryPart["type"] != "summary_text" {
+		t.Errorf("summary[0].type 应为 summary_text")
+	}
+	if summaryPart["text"] != "Let me calculate: 2+2=4" {
+		t.Errorf("summary text 不正确: %v", summaryPart["text"])
+	}
+
+	// 第二个应为 message
+	msg := output[1].(map[string]any)
+	if msg["type"] != "message" {
+		t.Errorf("output[1].type 应为 message，实际 %v", msg["type"])
+	}
+	content := msg["content"].([]any)
+	contentPart := content[0].(map[string]any)
+	if contentPart["text"] != "The answer is 4." {
+		t.Errorf("message text 不正确: %v", contentPart["text"])
+	}
+}
+
+func TestTransformToCodexResponse_WithoutReasoning(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "", "gpt-4")
+
+	openaiResp := `{
+		"id": "chatcmpl-456",
+		"choices": [{
+			"message": {"role": "assistant", "content": "Hello!"},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 5, "completion_tokens": 3}
+	}`
+
+	result, err := tr.TransformResponse(ctx, []byte(openaiResp))
+	if err != nil {
+		t.Fatalf("TransformResponse 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	output := parsed["output"].([]any)
+	// 没有 reasoning 时只有 message
+	if len(output) != 1 {
+		t.Fatalf("output 应有 1 个 item（只有 message），实际 %d", len(output))
+	}
+	msg := output[0].(map[string]any)
+	if msg["type"] != "message" {
+		t.Errorf("output[0].type 应为 message，实际 %v", msg["type"])
+	}
+}
+
+func TestTransformToCodexResponse_EmptyReasoningContent(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/responses", "", "deepseek-r1")
+
+	// reasoning_content 为空字符串时不应添加 reasoning item
+	openaiResp := `{
+		"id": "chatcmpl-789",
+		"choices": [{
+			"message": {"role": "assistant", "content": "Hi", "reasoning_content": ""},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 5, "completion_tokens": 3}
+	}`
+
+	result, err := tr.TransformResponse(ctx, []byte(openaiResp))
+	if err != nil {
+		t.Fatalf("TransformResponse 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	output := parsed["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("空 reasoning_content 时 output 应只有 1 个 item，实际 %d", len(output))
 	}
 }

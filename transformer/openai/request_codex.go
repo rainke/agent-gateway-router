@@ -1,13 +1,14 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 // transformCodexRequest 将 OpenAI Responses 风格请求转换为 OpenAI Chat Completions 格式
-func (t *Transformer) transformCodexRequest(body []byte, upstreamModel string) ([]byte, error) {
+func (t *Transformer) transformCodexRequest(ctx context.Context, body []byte, upstreamModel string) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("解析 Codex 请求失败: %w", err)
@@ -90,6 +91,22 @@ func (t *Transformer) transformCodexRequest(body []byte, upstreamModel string) (
 		if effort, ok := reasoning["effort"].(string); ok {
 			transformed["reasoning_effort"] = effort
 		}
+		// 请求中配置了 reasoning，标记为需要返回 reasoning
+		markReasoningIncluded(ctx)
+	}
+
+	// 检查 include 字段是否包含 reasoning.encrypted_content
+	if includes, ok := req["include"].([]any); ok {
+		for _, inc := range includes {
+			if s, ok := inc.(string); ok && strings.Contains(s, "reasoning") {
+				markReasoningIncluded(ctx)
+				break
+			}
+		}
+	}
+
+	if messagesContainReasoningContent(messages) {
+		markReasoningIncluded(ctx)
 	}
 
 	result, err := json.Marshal(transformed)
@@ -105,17 +122,38 @@ func (t *Transformer) transformCodexRequest(body []byte, upstreamModel string) (
 func convertCodexInputToMessages(input []any) []any {
 	var messages []any
 	var pendingToolCalls []map[string]any
+	var pendingReasoning string
 
 	// flushPendingToolCalls 将累积的 tool_calls 合并为一个 assistant message
 	flushPendingToolCalls := func() {
 		if len(pendingToolCalls) == 0 {
 			return
 		}
-		messages = append(messages, map[string]any{
+		msg := map[string]any{
 			"role":       "assistant",
 			"tool_calls": pendingToolCalls,
-		})
+		}
+		if pendingReasoning != "" {
+			msg["reasoning_content"] = pendingReasoning
+			pendingReasoning = ""
+		}
+		messages = append(messages, msg)
 		pendingToolCalls = nil
+	}
+
+	// flushPendingReasoning 将累积的 reasoning 附加到下一个 assistant message
+	// 这个函数不直接 flush，reasoning 会被附加到紧随其后的 message 或 function_call
+	// 如果 reasoning 后面没有跟随 assistant 内容，则单独生成一个空 assistant message
+	flushPendingReasoningAsMessage := func() {
+		if pendingReasoning == "" {
+			return
+		}
+		messages = append(messages, map[string]any{
+			"role":              "assistant",
+			"content":           "",
+			"reasoning_content": pendingReasoning,
+		})
+		pendingReasoning = ""
 	}
 
 	for _, item := range input {
@@ -129,9 +167,31 @@ func convertCodexInputToMessages(input []any) []any {
 		switch itemType {
 		case "message":
 			flushPendingToolCalls()
-			msg := convertCodexMessage(m)
-			if msg != nil {
-				messages = append(messages, msg)
+			role, _ := m["role"].(string)
+			if role == "assistant" {
+				// assistant message 可以携带之前的 reasoning
+				msg := convertCodexMessage(m)
+				if msg != nil && pendingReasoning != "" {
+					msg["reasoning_content"] = pendingReasoning
+					pendingReasoning = ""
+				}
+				if msg != nil {
+					messages = append(messages, msg)
+				}
+			} else {
+				// 非 assistant 消息前，先 flush 残留的 reasoning
+				flushPendingReasoningAsMessage()
+				msg := convertCodexMessage(m)
+				if msg != nil {
+					messages = append(messages, msg)
+				}
+			}
+		case "reasoning":
+			// reasoning output item：提取 summary 文本，暂存等待附加到后续 assistant message
+			flushPendingToolCalls()
+			reasoning := extractReasoningSummaryText(m)
+			if reasoning != "" {
+				pendingReasoning = reasoning
 			}
 		case "function_call":
 			// 累积 tool_call，不立即生成 message
@@ -148,6 +208,7 @@ func convertCodexInputToMessages(input []any) []any {
 			}
 		default:
 			flushPendingToolCalls()
+			flushPendingReasoningAsMessage()
 			// 未知类型或已经是 Chat Completions 格式的消息，直接透传
 			if _, hasRole := m["role"]; hasRole {
 				messages = append(messages, m)
@@ -157,8 +218,43 @@ func convertCodexInputToMessages(input []any) []any {
 
 	// 处理尾部残留的 function_call（理论上不应该出现没有 output 的情况，但防御性处理）
 	flushPendingToolCalls()
+	// 处理尾部残留的 reasoning
+	flushPendingReasoningAsMessage()
 
 	return messages
+}
+
+// extractReasoningSummaryText 从 reasoning output item 中提取 summary 文本
+// reasoning item 格式: {"type":"reasoning","id":"rs_...","summary":[{"type":"summary_text","text":"..."}]}
+func extractReasoningSummaryText(m map[string]any) string {
+	summary, ok := m["summary"].([]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, s := range summary {
+		sp, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, ok := sp["text"].(string); ok && text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func messagesContainReasoningContent(messages []any) bool {
+	for _, msg := range messages {
+		m, ok := msg.(map[string]any)
+		if !ok {
+			continue
+		}
+		if reasoning, ok := m["reasoning_content"].(string); ok && reasoning != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // buildToolCall 从 Responses API function_call item 构建单个 tool_call 对象

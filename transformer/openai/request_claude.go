@@ -1,13 +1,14 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 // transformClaudeRequest 将 Claude/Anthropic 风格请求转换为 OpenAI Chat Completions 格式
-func (t *Transformer) transformClaudeRequest(body []byte, upstreamModel string) ([]byte, error) {
+func (t *Transformer) transformClaudeRequest(ctx context.Context, body []byte, upstreamModel string) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("解析 Claude 请求失败: %w", err)

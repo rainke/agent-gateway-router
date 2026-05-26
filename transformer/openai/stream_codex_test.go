@@ -1297,3 +1297,584 @@ func TestBuildCodexFinalCompletedEvent(t *testing.T) {
 		t.Errorf("output[0].type 应为 message")
 	}
 }
+
+// === Reasoning (reasoning_content -> reasoning_summary) 测试 ===
+
+func TestTransformToCodexStreamChunk_ReasoningDelta(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 发送 reasoning_content
+	chunk := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"Let me think about this..."},"finish_reason":null}]}`)
+	events, err := tr.transformToCodexStreamChunk(ctx, chunk, "deepseek-r1")
+	if err != nil {
+		t.Fatalf("不应返回错误: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("reasoning_content 应产生事件")
+	}
+
+	// 第一个事件应为 output_item.added (reasoning)
+	var evt map[string]any
+	json.Unmarshal(events[0], &evt)
+	if evt["type"] != "response.output_item.added" {
+		t.Errorf("第一个事件应为 response.output_item.added，实际 %v", evt["type"])
+	}
+	item := evt["item"].(map[string]any)
+	if item["type"] != "reasoning" {
+		t.Errorf("item.type 应为 reasoning，实际 %v", item["type"])
+	}
+
+	// 第二个事件应为 reasoning_summary_part.added
+	json.Unmarshal(events[1], &evt)
+	if evt["type"] != "response.reasoning_summary_part.added" {
+		t.Errorf("第二个事件应为 response.reasoning_summary_part.added，实际 %v", evt["type"])
+	}
+	part := evt["part"].(map[string]any)
+	if part["type"] != "summary_text" {
+		t.Errorf("part.type 应为 summary_text，实际 %v", part["type"])
+	}
+	if part["text"] != "" {
+		t.Errorf("part.text 初始应为空字符串")
+	}
+
+	// 第三个事件应为 reasoning_summary_text.delta
+	json.Unmarshal(events[2], &evt)
+	if evt["type"] != "response.reasoning_summary_text.delta" {
+		t.Errorf("第三个事件应为 response.reasoning_summary_text.delta，实际 %v", evt["type"])
+	}
+	if evt["delta"] != "Let me think about this..." {
+		t.Errorf("delta 应为 'Let me think about this...'，实际 %v", evt["delta"])
+	}
+	if int(evt["output_index"].(float64)) != 0 {
+		t.Errorf("output_index 应为 0")
+	}
+	if int(evt["summary_index"].(float64)) != 0 {
+		t.Errorf("summary_index 应为 0")
+	}
+
+	// 验证状态
+	if !state.ReasoningStarted {
+		t.Error("ReasoningStarted 应为 true")
+	}
+	if state.AccumulatedReasoning != "Let me think about this..." {
+		t.Errorf("AccumulatedReasoning 不正确: %q", state.AccumulatedReasoning)
+	}
+}
+
+func TestTransformToCodexStreamChunk_MultipleReasoningDeltas(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 第一个 reasoning chunk
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"Step 1: "},"finish_reason":null}]}`)
+	events1, _ := tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+	if len(events1) != 3 {
+		t.Fatalf("第一个 reasoning chunk 应产生 3 个事件（output_item_added + part_added + delta），实际 %d", len(events1))
+	}
+
+	// 第二个 reasoning chunk - 不应再发送 part_added
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"analyze the problem."},"finish_reason":null}]}`)
+	events2, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+	if len(events2) != 1 {
+		t.Fatalf("后续 reasoning chunk 应只产生 1 个 delta 事件，实际 %d", len(events2))
+	}
+
+	var evt map[string]any
+	json.Unmarshal(events2[0], &evt)
+	if evt["type"] != "response.reasoning_summary_text.delta" {
+		t.Errorf("事件类型应为 response.reasoning_summary_text.delta，实际 %v", evt["type"])
+	}
+	if evt["delta"] != "analyze the problem." {
+		t.Errorf("delta 不正确: %v", evt["delta"])
+	}
+
+	if state.AccumulatedReasoning != "Step 1: analyze the problem." {
+		t.Errorf("AccumulatedReasoning 应为 'Step 1: analyze the problem.'，实际 %q", state.AccumulatedReasoning)
+	}
+}
+
+func TestTransformToCodexStreamChunk_ReasoningThenText(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 先发送 reasoning
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"thinking..."},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+
+	if !state.ReasoningStarted {
+		t.Fatal("reasoning 后 ReasoningStarted 应为 true")
+	}
+
+	// 然后发送 text content - 应先关闭 reasoning
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"content":"The answer is 42."},"finish_reason":null}]}`)
+	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+
+	// 应包含: reasoning_summary_text.done, reasoning_summary_part.done, output_item.done(reasoning), output_item.added, content_part.added, text.delta
+	if len(events) < 6 {
+		t.Fatalf("reasoning->text 转换应产生至少 6 个事件，实际 %d", len(events))
+	}
+
+	// 验证事件顺序
+	var evtTypes []string
+	for _, e := range events {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		evtTypes = append(evtTypes, evt["type"].(string))
+	}
+
+	expectedOrder := []string{
+		"response.reasoning_summary_text.done",
+		"response.reasoning_summary_part.done",
+		"response.output_item.done",
+		"response.output_item.added",
+		"response.content_part.added",
+		"response.output_text.delta",
+	}
+	for i, expected := range expectedOrder {
+		if i >= len(evtTypes) {
+			t.Fatalf("事件不足，缺少 %s", expected)
+		}
+		if evtTypes[i] != expected {
+			t.Errorf("事件[%d] 应为 %s，实际 %s", i, expected, evtTypes[i])
+		}
+	}
+
+	// 验证 output_item.done (reasoning) 的 item 类型
+	var reasoningDoneEvt map[string]any
+	json.Unmarshal(events[2], &reasoningDoneEvt)
+	if item, ok := reasoningDoneEvt["item"].(map[string]any); ok {
+		if item["type"] != "reasoning" {
+			t.Errorf("output_item.done 的 item.type 应为 reasoning，实际 %s", item["type"])
+		}
+	} else {
+		t.Error("output_item.done 应包含 item 字段")
+	}
+
+	// 验证 reasoning 状态已关闭
+	if state.ReasoningStarted {
+		t.Error("text 开始后 ReasoningStarted 应为 false")
+	}
+	// 验证 text 状态已开始
+	if !state.OutputItemStarted {
+		t.Error("OutputItemStarted 应为 true")
+	}
+	if !state.ContentPartStarted {
+		t.Error("ContentPartStarted 应为 true")
+	}
+}
+
+func TestTransformToCodexStreamChunk_ReasoningThenToolCall(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 先发送 reasoning
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"I need to run a command."},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+
+	// 然后发送 tool call - 应先关闭 reasoning
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":""}}]},"finish_reason":null}]}`)
+	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+
+	// 应包含: reasoning_summary_text.done, reasoning_summary_part.done, output_item.done (reasoning), output_item.added (function_call)
+	foundReasoningTextDone := false
+	foundReasoningPartDone := false
+	foundReasoningItemDone := false
+	foundToolItemAdded := false
+	for _, e := range events {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		switch evt["type"] {
+		case "response.reasoning_summary_text.done":
+			foundReasoningTextDone = true
+			if evt["text"] != "I need to run a command." {
+				t.Errorf("reasoning text done 内容不正确: %v", evt["text"])
+			}
+		case "response.reasoning_summary_part.done":
+			foundReasoningPartDone = true
+			part := evt["part"].(map[string]any)
+			if part["text"] != "I need to run a command." {
+				t.Errorf("reasoning part done 内容不正确: %v", part["text"])
+			}
+		case "response.output_item.done":
+			item, ok := evt["item"].(map[string]any)
+			if ok && item["type"] == "reasoning" {
+				foundReasoningItemDone = true
+			}
+		case "response.output_item.added":
+			item := evt["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				foundToolItemAdded = true
+			}
+		}
+	}
+
+	if !foundReasoningTextDone {
+		t.Error("应包含 reasoning_summary_text.done 事件")
+	}
+	if !foundReasoningPartDone {
+		t.Error("应包含 reasoning_summary_part.done 事件")
+	}
+	if !foundReasoningItemDone {
+		t.Error("应包含 reasoning output_item.done 事件")
+	}
+	if !foundToolItemAdded {
+		t.Error("应包含 function_call output_item.added 事件")
+	}
+
+	if state.ReasoningStarted {
+		t.Error("tool call 后 ReasoningStarted 应为 false")
+	}
+}
+
+func TestTransformToCodexStreamChunk_ReasoningThenFinish(t *testing.T) {
+	tr := &Transformer{}
+	ctx, _ := makeCodexCtxWithState("deepseek-r1")
+
+	// 发送 reasoning
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"done thinking"},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+
+	// 发送 text
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"content":"result"},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+
+	// 发送 finish 带 usage
+	chunk3 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50}}`)
+	events, _ := tr.transformToCodexStreamChunk(ctx, chunk3, "deepseek-r1")
+
+	// 找到 response.completed 事件，验证 output 包含 reasoning
+	for _, e := range events {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		if evt["type"] == "response.completed" {
+			resp := evt["response"].(map[string]any)
+			output := resp["output"].([]any)
+			if len(output) < 2 {
+				t.Fatalf("output 应至少有 2 个 item（reasoning + message），实际 %d", len(output))
+			}
+			// 第一个应为 reasoning
+			reasoning := output[0].(map[string]any)
+			if reasoning["type"] != "reasoning" {
+				t.Errorf("output[0].type 应为 reasoning，实际 %v", reasoning["type"])
+			}
+			summary := reasoning["summary"].([]any)
+			summaryPart := summary[0].(map[string]any)
+			if summaryPart["text"] != "done thinking" {
+				t.Errorf("reasoning summary text 应为 'done thinking'，实际 %v", summaryPart["text"])
+			}
+			// 第二个应为 message
+			msg := output[1].(map[string]any)
+			if msg["type"] != "message" {
+				t.Errorf("output[1].type 应为 message，实际 %v", msg["type"])
+			}
+			return
+		}
+	}
+	t.Error("未找到 response.completed 事件")
+}
+
+func TestTransformToCodexStreamChunk_OnlyReasoningThenFinish(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 只发送 reasoning，没有 text content
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"just thinking"},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+
+	// 直接 finish 带 usage
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+	events, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+
+	// 应包含 reasoning 关闭事件和 completed
+	foundReasoningTextDone := false
+	foundReasoningPartDone := false
+	foundReasoningItemDone := false
+	foundCompleted := false
+	for _, e := range events {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		switch evt["type"] {
+		case "response.reasoning_summary_text.done":
+			foundReasoningTextDone = true
+		case "response.reasoning_summary_part.done":
+			foundReasoningPartDone = true
+		case "response.output_item.done":
+			item, ok := evt["item"].(map[string]any)
+			if ok && item["type"] == "reasoning" {
+				foundReasoningItemDone = true
+			}
+		case "response.completed":
+			foundCompleted = true
+			resp := evt["response"].(map[string]any)
+			output := resp["output"].([]any)
+			// 只有 reasoning，没有 message
+			if len(output) != 1 {
+				t.Errorf("output 应有 1 个 item（只有 reasoning），实际 %d", len(output))
+			}
+			if len(output) > 0 {
+				item := output[0].(map[string]any)
+				if item["type"] != "reasoning" {
+					t.Errorf("output[0].type 应为 reasoning，实际 %v", item["type"])
+				}
+			}
+		}
+	}
+
+	if !foundReasoningTextDone {
+		t.Error("应包含 reasoning_summary_text.done 事件")
+	}
+	if !foundReasoningPartDone {
+		t.Error("应包含 reasoning_summary_part.done 事件")
+	}
+	if !foundReasoningItemDone {
+		t.Error("应包含 reasoning output_item.done 事件")
+	}
+	if !foundCompleted {
+		t.Error("应包含 response.completed 事件")
+	}
+	if state.ReasoningStarted {
+		t.Error("finish 后 ReasoningStarted 应为 false")
+	}
+}
+
+func TestTransformToCodexStreamChunk_ReasoningSequenceNumbers(t *testing.T) {
+	tr := &Transformer{}
+	ctx, _ := makeCodexCtxWithState("deepseek-r1")
+
+	// 发送 reasoning
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}`)
+	events1, _ := tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+
+	// 发送 text
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}`)
+	events2, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+
+	// 验证所有事件的序列号严格递增
+	allEvents := append(events1, events2...)
+	prevSeq := 0
+	for i, e := range allEvents {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		seq := int(evt["sequence_number"].(float64))
+		if seq <= prevSeq {
+			t.Errorf("事件[%d] 序列号应递增，前一个 %d，当前 %d (type=%v)", i, prevSeq, seq, evt["type"])
+		}
+		prevSeq = seq
+	}
+}
+
+func TestTransformToCodexStreamChunk_ReasoningDelayedUsage(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 发送 reasoning + text
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}`)
+	tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+
+	// finish 不带 usage
+	chunk3 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	events3, _ := tr.transformToCodexStreamChunk(ctx, chunk3, "deepseek-r1")
+
+	// 不应有 completed 事件
+	for _, e := range events3 {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		if evt["type"] == "response.completed" {
+			t.Fatal("无 usage 时不应发送 response.completed")
+		}
+	}
+	if !state.Finished {
+		t.Error("state.Finished 应为 true")
+	}
+
+	// 后续收到 usage chunk
+	usageChunk := []byte(`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50}}`)
+	events4, _ := tr.transformToCodexStreamChunk(ctx, usageChunk, "deepseek-r1")
+
+	if len(events4) != 1 {
+		t.Fatalf("收到 usage 后应产生 1 个事件，实际 %d", len(events4))
+	}
+	var evt map[string]any
+	json.Unmarshal(events4[0], &evt)
+	if evt["type"] != "response.completed" {
+		t.Errorf("事件应为 response.completed，实际 %v", evt["type"])
+	}
+
+	// 验证 completed 事件包含 reasoning
+	resp := evt["response"].(map[string]any)
+	output := resp["output"].([]any)
+	if len(output) < 2 {
+		t.Fatalf("output 应至少有 2 个 item，实际 %d", len(output))
+	}
+	reasoning := output[0].(map[string]any)
+	if reasoning["type"] != "reasoning" {
+		t.Errorf("output[0] 应为 reasoning")
+	}
+}
+
+func TestBuildCodexFinalCompletedEvent_WithReasoning(t *testing.T) {
+	state := &CodexStreamState{
+		ResponseID:           "resp_test",
+		Model:                "deepseek-r1",
+		AccumulatedText:      "The answer",
+		AccumulatedReasoning: "I thought about it",
+		InputTokens:          50,
+		OutputTokens:         25,
+		SequenceNumber:       10,
+		FinishStatus:         "completed",
+	}
+
+	event := BuildCodexFinalCompletedEvent(state)
+
+	resp := event["response"].(map[string]any)
+	output := resp["output"].([]map[string]any)
+	if len(output) != 2 {
+		t.Fatalf("output 应有 2 个 item（reasoning + message），实际 %d", len(output))
+	}
+
+	// 第一个是 reasoning
+	if output[0]["type"] != "reasoning" {
+		t.Errorf("output[0].type 应为 reasoning，实际 %v", output[0]["type"])
+	}
+	summary := output[0]["summary"].([]map[string]any)
+	if summary[0]["text"] != "I thought about it" {
+		t.Errorf("reasoning summary text 不正确: %v", summary[0]["text"])
+	}
+
+	// 第二个是 message
+	if output[1]["type"] != "message" {
+		t.Errorf("output[1].type 应为 message，实际 %v", output[1]["type"])
+	}
+}
+
+func TestBuildCodexFinalCompletedEvent_OnlyReasoning(t *testing.T) {
+	state := &CodexStreamState{
+		ResponseID:           "resp_test",
+		Model:                "deepseek-r1",
+		AccumulatedText:      "",
+		AccumulatedReasoning: "just thinking",
+		InputTokens:          10,
+		OutputTokens:         5,
+		SequenceNumber:       5,
+		FinishStatus:         "completed",
+	}
+
+	event := BuildCodexFinalCompletedEvent(state)
+
+	resp := event["response"].(map[string]any)
+	output := resp["output"].([]map[string]any)
+	if len(output) != 1 {
+		t.Fatalf("output 应有 1 个 item（只有 reasoning），实际 %d", len(output))
+	}
+	if output[0]["type"] != "reasoning" {
+		t.Errorf("output[0].type 应为 reasoning")
+	}
+}
+
+func TestTransformToCodexStreamChunk_EmptyReasoningContent(t *testing.T) {
+	tr := &Transformer{}
+	ctx, state := makeCodexCtxWithState("deepseek-r1")
+
+	// 空 reasoning_content 不应产生事件
+	chunk := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":""},"finish_reason":null}]}`)
+	events, err := tr.transformToCodexStreamChunk(ctx, chunk, "deepseek-r1")
+	if err != nil {
+		t.Fatalf("不应返回错误: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("空 reasoning_content 不应产生事件，实际 %d 个", len(events))
+	}
+	if state.ReasoningStarted {
+		t.Error("空 reasoning_content 不应启动 reasoning")
+	}
+}
+
+func TestTransformToCodexStreamChunk_ReasoningWithToolCallAndText(t *testing.T) {
+	// 完整流程: reasoning -> text -> tool_call -> finish
+	tr := &Transformer{}
+	ctx, _ := makeCodexCtxWithState("deepseek-r1")
+
+	// 1. reasoning
+	chunk1 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":"Let me analyze..."},"finish_reason":null}]}`)
+	events1, _ := tr.transformToCodexStreamChunk(ctx, chunk1, "deepseek-r1")
+	if len(events1) != 3 {
+		t.Fatalf("reasoning 应产生 3 个事件（output_item_added + part_added + delta），实际 %d", len(events1))
+	}
+
+	// 2. more reasoning
+	chunk2 := []byte(`{"choices":[{"index":0,"delta":{"reasoning_content":" I should run ls."},"finish_reason":null}]}`)
+	events2, _ := tr.transformToCodexStreamChunk(ctx, chunk2, "deepseek-r1")
+	if len(events2) != 1 {
+		t.Fatalf("后续 reasoning 应产生 1 个事件，实际 %d", len(events2))
+	}
+
+	// 3. text content
+	chunk3 := []byte(`{"choices":[{"index":0,"delta":{"content":"I'll run ls for you."},"finish_reason":null}]}`)
+	events3, _ := tr.transformToCodexStreamChunk(ctx, chunk3, "deepseek-r1")
+	// 应包含: reasoning_text_done, reasoning_part_done, output_item_done(reasoning), output_item_added, content_part_added, text_delta
+	if len(events3) != 6 {
+		t.Fatalf("reasoning->text 应产生 6 个事件，实际 %d", len(events3))
+	}
+
+	// 4. tool call
+	chunk4 := []byte(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"ls\"}"}}]},"finish_reason":null}]}`)
+	events4, _ := tr.transformToCodexStreamChunk(ctx, chunk4, "deepseek-r1")
+	// 应包含: text_done, content_part_done, output_item_done, tool_item_added, args_delta
+	foundTextDone := false
+	foundToolAdded := false
+	for _, e := range events4 {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		if evt["type"] == "response.output_text.done" {
+			foundTextDone = true
+		}
+		if evt["type"] == "response.output_item.added" {
+			item := evt["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				foundToolAdded = true
+			}
+		}
+	}
+	if !foundTextDone {
+		t.Error("应包含 output_text.done")
+	}
+	if !foundToolAdded {
+		t.Error("应包含 function_call output_item.added")
+	}
+
+	// 5. finish
+	chunk5 := []byte(`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":30}}`)
+	events5, _ := tr.transformToCodexStreamChunk(ctx, chunk5, "deepseek-r1")
+
+	// 验证 completed 事件
+	for _, e := range events5 {
+		var evt map[string]any
+		json.Unmarshal(e, &evt)
+		if evt["type"] == "response.completed" {
+			resp := evt["response"].(map[string]any)
+			output := resp["output"].([]any)
+			// 应有: reasoning, message, function_call
+			if len(output) < 3 {
+				t.Fatalf("output 应有 3 个 item，实际 %d", len(output))
+			}
+			types := make([]string, len(output))
+			for i, o := range output {
+				types[i] = o.(map[string]any)["type"].(string)
+			}
+			if types[0] != "reasoning" {
+				t.Errorf("output[0] 应为 reasoning，实际 %v", types[0])
+			}
+			if types[1] != "message" {
+				t.Errorf("output[1] 应为 message，实际 %v", types[1])
+			}
+			if types[2] != "function_call" {
+				t.Errorf("output[2] 应为 function_call，实际 %v", types[2])
+			}
+			return
+		}
+	}
+	t.Error("未找到 response.completed 事件")
+}

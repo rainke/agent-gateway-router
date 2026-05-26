@@ -21,7 +21,14 @@ const (
 	ClientModelKey ContextKey = "client_model"
 	// StreamStateKey 流式状态 context key
 	StreamStateKey ContextKey = "stream_state"
+	// RequestMetadataKey 请求转换期间收集的元信息 context key
+	RequestMetadataKey ContextKey = "request_metadata"
 )
+
+// RequestMetadata 记录请求转换期间发现的属性，供 proxy 写响应头使用。
+type RequestMetadata struct {
+	ReasoningIncluded bool
+}
 
 // StreamState 流式响应状态，用于跨 chunk 追踪 tool_calls 组装
 type StreamState struct {
@@ -58,11 +65,17 @@ func (t *Transformer) TransformRequest(ctx context.Context, clientBody []byte) (
 
 	switch {
 	case strings.Contains(path, "/v1/messages"):
-		return t.transformClaudeRequest(clientBody, upstreamModel)
+		return t.transformClaudeRequest(ctx, clientBody, upstreamModel)
 	case strings.Contains(path, "/v1/responses"):
-		return t.transformCodexRequest(clientBody, upstreamModel)
+		return t.transformCodexRequest(ctx, clientBody, upstreamModel)
 	default:
 		return clientBody, nil
+	}
+}
+
+func markReasoningIncluded(ctx context.Context) {
+	if metadata, ok := ctx.Value(RequestMetadataKey).(*RequestMetadata); ok && metadata != nil {
+		metadata.ReasoningIncluded = true
 	}
 }
 

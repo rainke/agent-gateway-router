@@ -32,6 +32,10 @@ type CodexStreamState struct {
 	// 流结束状态（延迟发送 response.completed 以等待 usage）
 	Finished     bool
 	FinishStatus string
+	// reasoning 相关
+	ReasoningStarted      bool   // 是否已发送 reasoning summary part added
+	AccumulatedReasoning  string // 累积的 reasoning 内容
+	ReasoningSummaryIndex int    // reasoning summary 在 output item 中的 summary_index
 }
 
 // CodexFunctionCall 跟踪流式 function call 的状态
@@ -102,6 +106,14 @@ func (t *Transformer) transformToCodexStreamChunk(ctx context.Context, chunk []b
 		}
 	}
 
+	// 处理 reasoning_content delta（DeepSeek 等模型的思考内容）
+	if delta != nil {
+		if reasoningContent, _ := delta["reasoning_content"].(string); reasoningContent != "" {
+			reasoningEvents := t.handleCodexReasoningDelta(state, reasoningContent)
+			events = append(events, reasoningEvents...)
+		}
+	}
+
 	// 处理普通文本 content delta
 	if delta != nil {
 		if content, _ := delta["content"].(string); content != "" {
@@ -123,6 +135,15 @@ func (t *Transformer) transformToCodexStreamChunk(ctx context.Context, chunk []b
 func (t *Transformer) handleCodexTextDelta(state *CodexStreamState, content string) [][]byte {
 	var events [][]byte
 
+	// 如果之前有 reasoning 在进行中，先关闭 reasoning summary part 和 output item
+	if state.ReasoningStarted {
+		events = append(events, t.codexReasoningSummaryTextDone(state))
+		events = append(events, t.codexReasoningSummaryPartDone(state))
+		events = append(events, t.codexReasoningOutputItemDone(state))
+		state.ReasoningStarted = false
+		state.OutputIndex++
+	}
+
 	// 确保 output_item 和 content_part 已经开始
 	if !state.OutputItemStarted {
 		events = append(events, t.codexOutputItemAdded(state))
@@ -142,6 +163,44 @@ func (t *Transformer) handleCodexTextDelta(state *CodexStreamState, content stri
 		"output_index":    state.OutputIndex,
 		"content_index":   state.ContentIndex,
 		"delta":           content,
+	}
+	events = append(events, mustMarshal(event))
+
+	return events
+}
+
+// handleCodexReasoningDelta 处理 reasoning_content 增量，生成 Responses API reasoning_summary 事件
+func (t *Transformer) handleCodexReasoningDelta(state *CodexStreamState, reasoningContent string) [][]byte {
+	var events [][]byte
+
+	// 确保 reasoning summary part 已经开始
+	if !state.ReasoningStarted {
+		// 如果有正在进行的 text output，先关闭它
+		if state.ContentPartStarted {
+			events = append(events, t.codexTextDone(state))
+			events = append(events, t.codexContentPartDone(state))
+			state.ContentPartStarted = false
+		}
+		if state.OutputItemStarted {
+			events = append(events, t.codexOutputItemDone(state))
+			state.OutputItemStarted = false
+		}
+
+		// 发送 reasoning output_item.added
+		events = append(events, t.codexReasoningOutputItemAdded(state))
+		events = append(events, t.codexReasoningSummaryPartAdded(state))
+		state.ReasoningStarted = true
+	}
+
+	// 发送 reasoning_summary_text.delta
+	state.AccumulatedReasoning += reasoningContent
+	state.SequenceNumber++
+	event := map[string]any{
+		"type":            "response.reasoning_summary_text.delta",
+		"sequence_number": state.SequenceNumber,
+		"output_index":    state.OutputIndex,
+		"summary_index":   state.ReasoningSummaryIndex,
+		"delta":           reasoningContent,
 	}
 	events = append(events, mustMarshal(event))
 
@@ -181,6 +240,15 @@ func (t *Transformer) handleCodexToolCallDelta(state *CodexStreamState, toolCall
 			fc.Name = fnName
 			fc.Index = idx
 
+			// 先关闭之前的 reasoning summary（如果有）
+			if state.ReasoningStarted {
+				events = append(events, t.codexReasoningSummaryTextDone(state))
+				events = append(events, t.codexReasoningSummaryPartDone(state))
+				events = append(events, t.codexReasoningOutputItemDone(state))
+				state.ReasoningStarted = false
+				state.OutputIndex++
+			}
+
 			// 先关闭之前的 text output item（如果有）
 			if state.OutputItemStarted && state.ContentPartStarted {
 				events = append(events, t.codexTextDone(state))
@@ -188,6 +256,7 @@ func (t *Transformer) handleCodexToolCallDelta(state *CodexStreamState, toolCall
 				events = append(events, t.codexOutputItemDone(state))
 				state.ContentPartStarted = false
 				state.OutputItemStarted = false
+				state.OutputIndex++
 			}
 
 			// 发送 function_call output_item.added
@@ -230,6 +299,15 @@ func (t *Transformer) handleCodexToolCallDelta(state *CodexStreamState, toolCall
 // handleCodexFinish 处理流结束，生成完成事件
 func (t *Transformer) handleCodexFinish(state *CodexStreamState, finishReason string) [][]byte {
 	var events [][]byte
+
+	// 关闭打开的 reasoning summary
+	if state.ReasoningStarted {
+		events = append(events, t.codexReasoningSummaryTextDone(state))
+		events = append(events, t.codexReasoningSummaryPartDone(state))
+		events = append(events, t.codexReasoningOutputItemDone(state))
+		state.ReasoningStarted = false
+		state.OutputIndex++
+	}
 
 	// 关闭打开的 text content
 	if state.ContentPartStarted {
@@ -379,10 +457,103 @@ func (t *Transformer) codexOutputItemDone(state *CodexStreamState) []byte {
 	return mustMarshal(event)
 }
 
+// codexReasoningSummaryPartAdded 生成 response.reasoning_summary_part.added 事件
+func (t *Transformer) codexReasoningSummaryPartAdded(state *CodexStreamState) []byte {
+	state.SequenceNumber++
+	state.ReasoningSummaryIndex = 0
+	event := map[string]any{
+		"type":            "response.reasoning_summary_part.added",
+		"sequence_number": state.SequenceNumber,
+		"output_index":    state.OutputIndex,
+		"summary_index":   state.ReasoningSummaryIndex,
+		"part": map[string]any{
+			"type": "summary_text",
+			"text": "",
+		},
+	}
+	return mustMarshal(event)
+}
+
+// codexReasoningSummaryTextDone 生成 response.reasoning_summary_text.done 事件
+func (t *Transformer) codexReasoningSummaryTextDone(state *CodexStreamState) []byte {
+	state.SequenceNumber++
+	event := map[string]any{
+		"type":            "response.reasoning_summary_text.done",
+		"sequence_number": state.SequenceNumber,
+		"output_index":    state.OutputIndex,
+		"summary_index":   state.ReasoningSummaryIndex,
+		"text":            state.AccumulatedReasoning,
+	}
+	return mustMarshal(event)
+}
+
+// codexReasoningSummaryPartDone 生成 response.reasoning_summary_part.done 事件
+func (t *Transformer) codexReasoningSummaryPartDone(state *CodexStreamState) []byte {
+	state.SequenceNumber++
+	event := map[string]any{
+		"type":            "response.reasoning_summary_part.done",
+		"sequence_number": state.SequenceNumber,
+		"output_index":    state.OutputIndex,
+		"summary_index":   state.ReasoningSummaryIndex,
+		"part": map[string]any{
+			"type": "summary_text",
+			"text": state.AccumulatedReasoning,
+		},
+	}
+	return mustMarshal(event)
+}
+
+// codexReasoningOutputItemAdded 生成 response.output_item.added 事件（reasoning 类型）
+func (t *Transformer) codexReasoningOutputItemAdded(state *CodexStreamState) []byte {
+	state.SequenceNumber++
+	event := map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": state.SequenceNumber,
+		"output_index":    state.OutputIndex,
+		"item": map[string]any{
+			"type":   "reasoning",
+			"id":     fmt.Sprintf("rs_%d", time.Now().UnixNano()),
+			"status": "in_progress",
+			"summary": []any{},
+		},
+	}
+	return mustMarshal(event)
+}
+
+// codexReasoningOutputItemDone 生成 response.output_item.done 事件（reasoning 类型）
+// reasoning 作为独立的 output item，需要 output_item.done 才能被客户端记录到会话历史
+func (t *Transformer) codexReasoningOutputItemDone(state *CodexStreamState) []byte {
+	state.SequenceNumber++
+	event := map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": state.SequenceNumber,
+		"output_index":    state.OutputIndex,
+		"item": map[string]any{
+			"type": "reasoning",
+			"id":   fmt.Sprintf("rs_%d", time.Now().UnixNano()),
+			"summary": []map[string]any{
+				{"type": "summary_text", "text": state.AccumulatedReasoning},
+			},
+		},
+	}
+	return mustMarshal(event)
+}
+
 // buildCodexCompletedEvent 构建 response.completed 事件
 func (t *Transformer) buildCodexCompletedEvent(state *CodexStreamState, status string) map[string]any {
 	// 构建 output 数组
 	var output []map[string]any
+
+	// 如果有 reasoning 内容，添加 reasoning output item
+	if state.AccumulatedReasoning != "" {
+		output = append(output, map[string]any{
+			"type": "reasoning",
+			"id":   fmt.Sprintf("rs_%d", time.Now().UnixNano()),
+			"summary": []map[string]any{
+				{"type": "summary_text", "text": state.AccumulatedReasoning},
+			},
+		})
+	}
 
 	// 如果有文本内容
 	if state.AccumulatedText != "" {
@@ -469,6 +640,17 @@ func mustMarshal(v any) []byte {
 func BuildCodexFinalCompletedEvent(state *CodexStreamState) map[string]any {
 	// 构建 output 数组
 	var output []map[string]any
+
+	// 如果有 reasoning 内容，添加 reasoning output item
+	if state.AccumulatedReasoning != "" {
+		output = append(output, map[string]any{
+			"type": "reasoning",
+			"id":   fmt.Sprintf("rs_%d", time.Now().UnixNano()),
+			"summary": []map[string]any{
+				{"type": "summary_text", "text": state.AccumulatedReasoning},
+			},
+		})
+	}
 
 	// 如果有文本内容
 	if state.AccumulatedText != "" {

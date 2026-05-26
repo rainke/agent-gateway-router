@@ -33,6 +33,26 @@ func newTestProxy(upstreamURL string) *Proxy {
 	return New(cfg, r)
 }
 
+func newTestProxyWithTransformer(upstreamURL string, transformers []string) *Proxy {
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{
+				Name:        "test-provider",
+				APIBaseURL:  upstreamURL,
+				APIKey:      "sk-test",
+				Models:      []string{"model-a"},
+				Transformer: transformers,
+			},
+		},
+		Router: map[string]string{
+			"default":  "test-provider,model-a",
+			"claude-3": "test-provider,model-a",
+		},
+	}
+	r := router.New(cfg)
+	return New(cfg, r)
+}
+
 func TestHandleNotImplemented(t *testing.T) {
 	p := newTestProxy("http://localhost")
 
@@ -113,6 +133,32 @@ func TestHandleMessages_NonStream(t *testing.T) {
 	block := content[0].(map[string]any)
 	if block["text"] != "Hello!" {
 		t.Errorf("响应文本应为 Hello!，实际 %v", block["text"])
+	}
+}
+
+func TestHandleMessages_NonStreamReasoningHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-123",
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithTransformer(upstream.URL, []string{"openai"})
+
+	body := `{"model":"claude-3","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"I should inspect the code."},{"type":"text","text":"Hello!"}]}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessages(w, req)
+
+	// x-reasoning-included 只针对 /v1/responses 接口，/v1/messages 不应设置
+	if got := w.Header().Get("x-reasoning-included"); got != "" {
+		t.Fatalf("x-reasoning-included 头不应在 /v1/messages 中设置，实际 %q", got)
 	}
 }
 
@@ -247,6 +293,35 @@ func TestHandleMessages_Stream(t *testing.T) {
 	}
 	if !strings.Contains(respBody, "World") {
 		t.Error("响应应包含文本 World")
+	}
+}
+
+func TestHandleMessages_StreamReasoningHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+		fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Done\"},\"finish_reason\":null}]}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithTransformer(upstream.URL, []string{"openai"})
+
+	body := `{"model":"claude-3","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"I should inspect the code."},{"type":"text","text":"Done"}]}],"max_tokens":100,"stream":true}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessages(w, req)
+
+	// x-reasoning-included 只针对 /v1/responses 接口，/v1/messages 不应设置
+	if got := w.Header().Get("x-reasoning-included"); got != "" {
+		t.Fatalf("x-reasoning-included 头不应在 /v1/messages 中设置，实际 %q", got)
 	}
 }
 
@@ -507,6 +582,92 @@ func TestHandleResponses_Stream(t *testing.T) {
 	}
 	if !strings.Contains(respBody, "[DONE]") {
 		t.Error("流式响应应包含 [DONE] 标记")
+	}
+}
+
+func TestHandleResponses_NonStreamReasoningHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-456",
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": "Response!"}, "finish_reason": "stop"}},
+			"usage":   map[string]any{"prompt_tokens": 5, "completion_tokens": 3},
+		})
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithTransformer(upstream.URL, []string{"openai"})
+
+	body := `{"model":"mimo-v2.5-pro","input":"(4.113+5.666) * 3.22 等于几","include":["reasoning.encrypted_content"],"reasoning":{"effort":"high","summary":"concise"}}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleResponses(w, req)
+
+	if got := w.Header().Get("x-reasoning-included"); got != "true" {
+		t.Fatalf("x-reasoning-included 头应为 true，实际 %q", got)
+	}
+}
+
+func TestHandleResponses_StreamReasoningHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher := w.(http.Flusher)
+
+		chunks := []string{
+			`{"choices":[{"index":0,"delta":{"content":"27.65"},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		}
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithTransformer(upstream.URL, []string{"openai"})
+
+	body := `{"model":"mimo-v2.5-pro","input":"(4.113+5.666) * 3.22 等于几","include":["reasoning.encrypted_content"],"reasoning":{"effort":"high","summary":"concise"},"stream":true}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleResponses(w, req)
+
+	if got := w.Header().Get("x-reasoning-included"); got != "true" {
+		t.Fatalf("x-reasoning-included 头应为 true，实际 %q", got)
+	}
+}
+
+func TestHandleResponses_NoReasoningHeaderWithoutConfig(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-789",
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}},
+			"usage":   map[string]any{"prompt_tokens": 5, "completion_tokens": 3},
+		})
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithTransformer(upstream.URL, []string{"openai"})
+
+	// 没有 reasoning 配置和 include 字段
+	body := `{"model":"mimo-v2.5-pro","input":"hello"}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleResponses(w, req)
+
+	if got := w.Header().Get("x-reasoning-included"); got != "" {
+		t.Fatalf("x-reasoning-included 头不应设置，实际 %q", got)
 	}
 }
 

@@ -148,6 +148,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	ctx := context.WithValue(r.Context(), openai.RequestPathKey, path)
 	ctx = context.WithValue(ctx, openai.UpstreamModelKey, result.Model)
 	ctx = context.WithValue(ctx, openai.ClientModelKey, clientModel)
+	ctx = context.WithValue(ctx, openai.RequestMetadataKey, &openai.RequestMetadata{})
 
 	slog.Debug("转换前的请求体", "body", string(body))
 
@@ -159,6 +160,11 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	}
 
 	slog.Debug("转换后的请求体", "body", string(transformedBody))
+
+	// 只在 Responses API 路径下检查 reasoning 标记
+	if strings.Contains(path, "/v1/responses") {
+		markReasoningFromTransformedBody(ctx, transformedBody)
+	}
 
 	// 构建上游请求
 	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, result.Provider.APIBaseURL, strings.NewReader(string(transformedBody)))
@@ -202,6 +208,38 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		}
 	} else {
 		p.handleNormalResponse(ctx, w, resp, chain)
+	}
+}
+
+func writeReasoningHeader(ctx context.Context, w http.ResponseWriter) {
+	metadata, ok := ctx.Value(openai.RequestMetadataKey).(*openai.RequestMetadata)
+	if !ok || metadata == nil || !metadata.ReasoningIncluded {
+		return
+	}
+	w.Header().Set("x-reasoning-included", "true")
+}
+
+func markReasoningFromTransformedBody(ctx context.Context, body []byte) {
+	metadata, ok := ctx.Value(openai.RequestMetadataKey).(*openai.RequestMetadata)
+	if !ok || metadata == nil || metadata.ReasoningIncluded {
+		return
+	}
+
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return
+	}
+
+	msgs, _ := req["messages"].([]any)
+	for _, msg := range msgs {
+		m, ok := msg.(map[string]any)
+		if !ok {
+			continue
+		}
+		if reasoning, ok := m["reasoning_content"].(string); ok && reasoning != "" {
+			metadata.ReasoningIncluded = true
+			return
+		}
 	}
 }
 
@@ -390,6 +428,7 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 // handleCodexStreamResponse 处理 Codex (Responses API) 客户端的流式响应
 func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, clientModel string) {
 	// 设置流式响应头
+	writeReasoningHeader(ctx, w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -491,6 +530,7 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 // handleStreamResponse 处理通用流式响应（非 Claude 客户端）
 func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain) {
 	// 设置流式响应头
+	writeReasoningHeader(ctx, w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -570,6 +610,7 @@ func (p *Proxy) handleNormalResponse(ctx context.Context, w http.ResponseWriter,
 	}
 
 	// 设置响应头
+	writeReasoningHeader(ctx, w)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(transformed)

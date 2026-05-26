@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,17 @@ func (t *AnthropicTransformer) TransformRequest(ctx context.Context, body []byte
 	if isCodexRequest(ctx) {
 		return nil, fmt.Errorf("Codex (Responses API) 请求未实现，仅支持 Anthropic (Messages API) 请求")
 	}
+
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body, nil
+	}
+
+	if upstreamModel, _ := ctx.Value(openai.UpstreamModelKey).(string); upstreamModel != "" {
+		req["model"] = upstreamModel
+		return json.Marshal(req)
+	}
+
 	return body, nil
 }
 
