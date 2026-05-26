@@ -40,7 +40,7 @@ type ModelInfo struct {
 	ApplyPatchToolType            *ApplyPatchToolType     `json:"apply_patch_tool_type,omitempty"`
 	WebSearchToolType             WebSearchToolType       `json:"web_search_tool_type"`
 	TruncationPolicy              TruncationPolicyConfig  `json:"truncation_policy"`
-	SupportsParallelToolCalls     bool                    `json:"supports_parallel_tool_calls"`
+	SupportsParallelToolCalls     *bool                   `json:"supports_parallel_tool_calls"`
 	SupportsImageDetailOriginal   bool                    `json:"supports_image_detail_original,omitempty"`
 	ContextWindow                 *int64                  `json:"context_window,omitempty"`
 	MaxContextWindow              *int64                  `json:"max_context_window,omitempty"`
@@ -227,60 +227,77 @@ func loadModelsFromFile(filename string) ([]ModelInfo, error) {
 }
 
 // applyDefaults 为 ModelInfo 中未设置的字段填充合理默认值
+// 使用 buildDefaultModelInfo 作为默认值来源，通过 JSON map merge 类似 JS Object.assign({}, defaults, m)
 func applyDefaults(m *ModelInfo) {
-	// truncation_policy: 如果 mode 为空，设置默认值
-	if m.TruncationPolicy.Mode == "" {
-		m.TruncationPolicy.Mode = TruncationModeTokens
+	defaults := buildDefaultModelInfo(m.Slug)
+
+	defaultBytes, _ := json.Marshal(defaults)
+	modelBytes, _ := json.Marshal(m)
+
+	var defaultMap map[string]json.RawMessage
+	var modelMap map[string]json.RawMessage
+	json.Unmarshal(defaultBytes, &defaultMap)
+	json.Unmarshal(modelBytes, &modelMap)
+
+	result := make(map[string]json.RawMessage, len(defaultMap))
+	// 以 defaults 为基础
+	for k, v := range defaultMap {
+		result[k] = v
 	}
-	if m.TruncationPolicy.Limit == 0 && m.ContextWindow != nil {
-		m.TruncationPolicy.Limit = 10000
+	// 用 m 的非零值覆盖 defaults
+	for k, v := range modelMap {
+		if dVal, ok := defaultMap[k]; ok {
+			result[k] = mergeJSONValue(v, dVal)
+		} else {
+			result[k] = v
+		}
 	}
 
-	// input_modalities: 如果为空，默认支持 text
-	if len(m.InputModalities) == 0 {
-		m.InputModalities = []InputModality{InputModalityText}
+	merged, _ := json.Marshal(result)
+	json.Unmarshal(merged, m)
+}
+
+// mergeJSONValue 递归合并两个 JSON 值，类似 Object.assign：
+//   - 基本类型：model 非零则保留，否则使用 default
+//   - 对象类型：递归合并每个字段
+//   - 数组类型：model 非 null 则保留，否则使用 default
+func mergeJSONValue(model, defaults json.RawMessage) json.RawMessage {
+	modelStr := strings.TrimSpace(string(model))
+
+	// model 为 null，使用 default
+	if modelStr == "null" {
+		return defaults
 	}
 
-	// effective_context_window_percent: 如果为 0，默认 80
-	if m.EffectiveContextWindowPercent == 0 {
-		m.EffectiveContextWindowPercent = 95
+	// 尝试作为对象递归合并
+	var mMap, dMap map[string]json.RawMessage
+	if json.Unmarshal(model, &mMap) == nil && json.Unmarshal(defaults, &dMap) == nil {
+		result := make(map[string]json.RawMessage, len(dMap))
+		for k, v := range dMap {
+			result[k] = v
+		}
+		for k, v := range mMap {
+			if dVal, ok := dMap[k]; ok {
+				result[k] = mergeJSONValue(v, dVal)
+			} else {
+				result[k] = v
+			}
+		}
+		merged, _ := json.Marshal(result)
+		return merged
 	}
 
-	// supports_reasoning_summaries: 如果未设置（nil），默认 true
-	if m.SupportsReasoningSummaries == nil {
-		t := true
-		m.SupportsReasoningSummaries = &t
+	// 基本类型：零值则使用 default
+	if isZeroJSON(modelStr) {
+		return defaults
 	}
+	return model
+}
 
-	// default_reasoning_summary: 如果为空，默认 concise
-	if m.DefaultReasoningSummary == "" {
-		m.DefaultReasoningSummary = ReasoningSummaryConcise
-	}
-
-	// experimental_supported_tools: 如果为 nil，设置为空切片确保 JSON 序列化为 []
-	if m.ExperimentalSupportedTools == nil {
-		m.ExperimentalSupportedTools = []string{}
-	}
-
-	// supported_reasoning_levels: 如果为 nil，设置为空切片
-	if m.SupportedReasoningLevels == nil {
-		m.SupportedReasoningLevels = []ReasoningEffortPreset{}
-	}
-
-	// web_search_tool_type: 如果为空，默认 text
-	if m.WebSearchToolType == "" {
-		m.WebSearchToolType = WebSearchToolTypeText
-	}
-
-	// shell_type: 如果为空，默认 default
-	if m.ShellType == "" {
-		m.ShellType = ConfigShellToolTypeDefault
-	}
-
-	// visibility: 如果为空，默认 list
-	if m.Visibility == "" {
-		m.Visibility = ModelVisibilityList
-	}
+// isZeroJSON 判断 JSON 值是否为"零值"（应被 default 覆盖）
+// null、空字符串、0 数值视为零值；false 不视为零值（保留用户显式设置）
+func isZeroJSON(s string) bool {
+	return s == "null" || s == `""` || s == "0" || s == "0.0"
 }
 
 // generateDefaultModels 根据 router 配置生成默认的模型列表
@@ -321,6 +338,7 @@ func buildDefaultModelInfo(slug string) ModelInfo {
 	defaultAutoCompactLimit := int64(160000)
 	high := ReasoningEffortHigh
 	supportsReasoningSummaries := true
+	supportsParallelToolCalls := true
 
 	return ModelInfo{
 		Slug:                  slug,
@@ -342,7 +360,7 @@ func buildDefaultModelInfo(slug string) ModelInfo {
 		SupportVerbosity:              false,
 		WebSearchToolType:             WebSearchToolTypeText,
 		TruncationPolicy:              TruncationPolicyConfig{Mode: TruncationModeTokens, Limit: 10000},
-		SupportsParallelToolCalls:     true,
+		SupportsParallelToolCalls:     &supportsParallelToolCalls,
 		ContextWindow:                 &defaultContextWindow,
 		MaxContextWindow:              &defaultMaxContextWindow,
 		AutoCompactTokenLimit:         &defaultAutoCompactLimit,
