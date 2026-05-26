@@ -1691,3 +1691,109 @@ func TestTransformToCodexResponse_EmptyReasoningContent(t *testing.T) {
 		t.Fatalf("空 reasoning_content 时 output 应只有 1 个 item，实际 %d", len(output))
 	}
 }
+
+// === Claude assistant thinking → reasoning_content 测试（从 deepseek 迁移） ===
+
+func TestConvertClaudeAssistantMessage_WithThinkingBlocks(t *testing.T) {
+	tr := &Transformer{}
+	msg := map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "thinking", "thinking": "need to inspect files"},
+			map[string]any{"type": "text", "text": "I will check that."},
+		},
+	}
+
+	results := tr.ConvertClaudeAssistantMessage(msg)
+	if len(results) != 1 {
+		t.Fatalf("应返回 1 条消息，实际 %d", len(results))
+	}
+
+	m := results[0].(map[string]any)
+	if m["reasoning_content"] != "need to inspect files" {
+		t.Errorf("reasoning_content 应为 'need to inspect files'，实际 %v", m["reasoning_content"])
+	}
+	if m["content"] != "I will check that." {
+		t.Errorf("content 应为 'I will check that.'，实际 %v", m["content"])
+	}
+}
+
+func TestConvertClaudeAssistantMessage_MultipleThinkingBlocks(t *testing.T) {
+	tr := &Transformer{}
+	msg := map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "thinking", "thinking": "first thought"},
+			map[string]any{"type": "thinking", "text": "second thought"},
+			map[string]any{"type": "text", "text": "answer"},
+		},
+	}
+
+	results := tr.ConvertClaudeAssistantMessage(msg)
+	m := results[0].(map[string]any)
+	if m["reasoning_content"] != "first thought\nsecond thought" {
+		t.Errorf("多个 thinking blocks 应用换行连接，实际 %v", m["reasoning_content"])
+	}
+}
+
+func TestConvertClaudeAssistantMessage_ThinkingWithToolUse(t *testing.T) {
+	tr := &Transformer{}
+	msg := map[string]any{
+		"role": "assistant",
+		"content": []any{
+			map[string]any{"type": "thinking", "thinking": "I should run ls"},
+			map[string]any{"type": "text", "text": "Let me check."},
+			map[string]any{"type": "tool_use", "id": "t1", "name": "bash", "input": map[string]any{"command": "ls"}},
+		},
+	}
+
+	results := tr.ConvertClaudeAssistantMessage(msg)
+	m := results[0].(map[string]any)
+	if m["reasoning_content"] != "I should run ls" {
+		t.Errorf("reasoning_content 不正确: %v", m["reasoning_content"])
+	}
+	if m["content"] != "Let me check." {
+		t.Errorf("content 不正确: %v", m["content"])
+	}
+	tc := m["tool_calls"].([]map[string]any)
+	if len(tc) != 1 || tc[0]["id"] != "t1" {
+		t.Errorf("tool_calls 不正确: %v", tc)
+	}
+}
+
+func TestTransformClaudeRequest_AssistantThinkingConvertedToReasoningContent(t *testing.T) {
+	tr := &Transformer{}
+	ctx := makeCtx("/v1/messages", "real-model", "client-model")
+
+	body := []byte(`{
+		"model": "claude-3",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{"type": "thinking", "thinking": "prior reasoning"},
+					{"type": "text", "text": "prior answer"}
+				]
+			},
+			{"role": "user", "content": "continue"}
+		],
+		"max_tokens": 100
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	json.Unmarshal(result, &parsed)
+
+	msgs := parsed["messages"].([]any)
+	assistant := msgs[0].(map[string]any)
+	if assistant["reasoning_content"] != "prior reasoning" {
+		t.Errorf("reasoning_content 应为 'prior reasoning'，实际 %v", assistant["reasoning_content"])
+	}
+	if assistant["content"] != "prior answer" {
+		t.Errorf("content 应为 'prior answer'，实际 %v", assistant["content"])
+	}
+}

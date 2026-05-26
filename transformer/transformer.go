@@ -3,6 +3,7 @@ package transformer
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"agr/transformer/openai"
 	"agr/transformer/tctx"
@@ -118,4 +119,10 @@ func Get(name string) (Transformer, error) {
 		return nil, fmt.Errorf("未知的 transformer: %s", name)
 	}
 	return factory(), nil
+}
+
+// isClaudeMessagesRequest 判断当前请求是否为 Anthropic Messages API (/v1/messages)
+func isClaudeMessagesRequest(ctx context.Context) bool {
+	path, _ := ctx.Value(tctx.RequestPathKey).(string)
+	return strings.Contains(path, "/v1/messages")
 }

@@ -14,7 +14,7 @@ func makeCtx(path, upstreamModel, clientModel string) context.Context {
 	return ctx
 }
 
-func TestDeepSeekTransformRequest_DisablesThinkingForNonClaudeMessages(t *testing.T) {
+func TestDeepSeekTransformRequest_DisablesThinkingWhenNoReasoning(t *testing.T) {
 	tr := &DeepSeekTransformer{}
 	body := []byte(`{"model":"deepseek-reasoner","messages":[{"role":"user","content":"hi"}]}`)
 
@@ -34,6 +34,67 @@ func TestDeepSeekTransformRequest_DisablesThinkingForNonClaudeMessages(t *testin
 	}
 	if thinking["type"] != "disabled" {
 		t.Fatalf("期望 thinking.type 为 disabled，实际 %v", thinking["type"])
+	}
+}
+
+func TestDeepSeekTransformRequest_DisablesThinkingWhenEffortNone(t *testing.T) {
+	tr := &DeepSeekTransformer{}
+	body := []byte(`{"model":"deepseek-reasoner","reasoning_effort":"none","messages":[{"role":"user","content":"hi"}]}`)
+
+	result, err := tr.TransformRequest(context.Background(), body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("解析结果失败: %v", err)
+	}
+
+	thinking, ok := parsed["thinking"].(map[string]any)
+	if !ok {
+		t.Fatal("期望 thinking 字段存在")
+	}
+	if thinking["type"] != "disabled" {
+		t.Fatalf("期望 thinking.type 为 disabled，实际 %v", thinking["type"])
+	}
+}
+
+func TestDeepSeekTransformRequest_PreservesThinkingWhenEffortHigh(t *testing.T) {
+	tr := &DeepSeekTransformer{}
+	body := []byte(`{"model":"deepseek-reasoner","reasoning_effort":"high","messages":[{"role":"user","content":"hi"}]}`)
+
+	result, err := tr.TransformRequest(context.Background(), body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("解析结果失败: %v", err)
+	}
+
+	if _, ok := parsed["thinking"]; ok {
+		t.Fatal("reasoning_effort=high 时不应注入 thinking: disabled")
+	}
+}
+
+func TestDeepSeekTransformRequest_PreservesThinkingWhenEffortLow(t *testing.T) {
+	tr := &DeepSeekTransformer{}
+	body := []byte(`{"model":"deepseek-reasoner","reasoning_effort":"low","messages":[{"role":"user","content":"hi"}]}`)
+
+	result, err := tr.TransformRequest(context.Background(), body)
+	if err != nil {
+		t.Fatalf("TransformRequest 失败: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("解析结果失败: %v", err)
+	}
+
+	if _, ok := parsed["thinking"]; ok {
+		t.Fatal("reasoning_effort=low 时不应注入 thinking: disabled")
 	}
 }
 
@@ -57,7 +118,7 @@ func TestDeepSeekTransformRequest_DoesNotDisableThinkingForClaudeMessages(t *tes
 	}
 }
 
-func TestDeepSeekTransformRequest_MovesClaudeThinkingToReasoningContent(t *testing.T) {
+func TestDeepSeekTransformRequest_ClaudeMessagesPassthrough(t *testing.T) {
 	tr := &DeepSeekTransformer{}
 	ctx := makeCtx("/v1/messages", "deepseek-reasoner", "claude-3")
 	body := []byte(`{
@@ -78,15 +139,9 @@ func TestDeepSeekTransformRequest_MovesClaudeThinkingToReasoningContent(t *testi
 		t.Fatalf("TransformRequest 失败: %v", err)
 	}
 
-	var parsed map[string]any
-	if err := json.Unmarshal(result, &parsed); err != nil {
-		t.Fatalf("解析结果失败: %v", err)
-	}
-
-	messages := parsed["messages"].([]any)
-	assistant := messages[0].(map[string]any)
-	if assistant["reasoning_content"] != "need to inspect files" {
-		t.Fatalf("期望 reasoning_content 保留 thinking，实际 %v", assistant["reasoning_content"])
+	// deepseek 不再转换 thinking → reasoning_content，应原样透传
+	if string(result) != string(body) {
+		t.Fatalf("Claude messages 请求应原样透传，实际 %s", string(result))
 	}
 }
 
