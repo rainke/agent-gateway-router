@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"agr/transformer/tctx"
 )
 
 // CodexStreamState 跟踪 Codex (Responses API) 流式响应的状态
@@ -48,7 +50,7 @@ type CodexFunctionCall struct {
 }
 
 // CodexStreamStateKey context key
-const CodexStreamStateKey ContextKey = "codex_stream_state"
+const CodexStreamStateKey tctx.ContextKey = "codex_stream_state"
 
 // transformToCodexStreamChunk 将 OpenAI Chat Completions 流式 chunk 转换为 Responses API SSE 事件
 // 返回多个事件的 JSON 数组，由 proxy 层拆分为独立 SSE 事件输出

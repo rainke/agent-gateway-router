@@ -3,13 +3,11 @@ package transformer
 import (
 	"context"
 	"testing"
-
-	"agr/transformer/openai"
 )
 
 func TestOpenAIResponses_CodexRequest_PassThrough(t *testing.T) {
 	tr := &OpenAIResponsesTransformer{}
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/responses")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/responses")
 	body := []byte(`{"model":"gpt-4","input":"hello"}`)
 
 	result, err := tr.TransformRequest(ctx, body)
@@ -23,7 +21,7 @@ func TestOpenAIResponses_CodexRequest_PassThrough(t *testing.T) {
 
 func TestOpenAIResponses_ClaudeRequest_Error(t *testing.T) {
 	tr := &OpenAIResponsesTransformer{}
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/messages")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/messages")
 	body := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`)
 
 	_, err := tr.TransformRequest(ctx, body)
@@ -66,7 +64,7 @@ func TestOpenAIResponses_InChain_BlocksClaude(t *testing.T) {
 		t.Fatalf("创建 Chain 失败: %v", err)
 	}
 
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/messages")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/messages")
 	body := []byte(`{"model":"claude-3"}`)
 
 	_, err = chain.TransformRequest(ctx, body)
@@ -81,7 +79,7 @@ func TestOpenAIResponses_InChain_AllowsCodex(t *testing.T) {
 		t.Fatalf("创建 Chain 失败: %v", err)
 	}
 
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/responses")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/responses")
 	body := []byte(`{"model":"gpt-4"}`)
 
 	result, err := chain.TransformRequest(ctx, body)

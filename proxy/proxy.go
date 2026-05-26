@@ -16,6 +16,7 @@ import (
 	"agr/router"
 	"agr/transformer"
 	"agr/transformer/openai"
+	"agr/transformer/tctx"
 )
 
 // Proxy 代理处理器
@@ -145,10 +146,10 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	}
 
 	// 构建 context，传递请求路径、上游模型名和客户端模型名
-	ctx := context.WithValue(r.Context(), openai.RequestPathKey, path)
-	ctx = context.WithValue(ctx, openai.UpstreamModelKey, result.Model)
-	ctx = context.WithValue(ctx, openai.ClientModelKey, clientModel)
-	ctx = context.WithValue(ctx, openai.RequestMetadataKey, &openai.RequestMetadata{})
+	ctx := context.WithValue(r.Context(), tctx.RequestPathKey, path)
+	ctx = context.WithValue(ctx, tctx.UpstreamModelKey, result.Model)
+	ctx = context.WithValue(ctx, tctx.ClientModelKey, clientModel)
+	ctx = context.WithValue(ctx, tctx.RequestMetadataKey, &tctx.RequestMetadata{})
 
 	slog.Debug("转换前的请求体", "body", string(body))
 
@@ -212,7 +213,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 }
 
 func writeReasoningHeader(ctx context.Context, w http.ResponseWriter) {
-	metadata, ok := ctx.Value(openai.RequestMetadataKey).(*openai.RequestMetadata)
+	metadata, ok := ctx.Value(tctx.RequestMetadataKey).(*tctx.RequestMetadata)
 	if !ok || metadata == nil || !metadata.ReasoningIncluded {
 		return
 	}
@@ -220,7 +221,7 @@ func writeReasoningHeader(ctx context.Context, w http.ResponseWriter) {
 }
 
 func markReasoningFromTransformedBody(ctx context.Context, body []byte) {
-	metadata, ok := ctx.Value(openai.RequestMetadataKey).(*openai.RequestMetadata)
+	metadata, ok := ctx.Value(tctx.RequestMetadataKey).(*tctx.RequestMetadata)
 	if !ok || metadata == nil || metadata.ReasoningIncluded {
 		return
 	}
@@ -259,8 +260,8 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	}
 
 	// 创建流式状态追踪
-	state := &openai.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
-	ctx = context.WithValue(ctx, openai.StreamStateKey, state)
+	state := &tctx.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
+	ctx = context.WithValue(ctx, tctx.StreamStateKey, state)
 
 	// 发送 message_start 事件
 	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())

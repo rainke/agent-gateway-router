@@ -4,15 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-
-	"agr/transformer/openai"
 )
 
 func makeCtx(path, upstreamModel, clientModel string) context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, openai.RequestPathKey, path)
-	ctx = context.WithValue(ctx, openai.UpstreamModelKey, upstreamModel)
-	ctx = context.WithValue(ctx, openai.ClientModelKey, clientModel)
+	ctx = context.WithValue(ctx, RequestPathKey, path)
+	ctx = context.WithValue(ctx, UpstreamModelKey, upstreamModel)
+	ctx = context.WithValue(ctx, ClientModelKey, clientModel)
 	return ctx
 }
 

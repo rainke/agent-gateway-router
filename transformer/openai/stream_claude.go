@@ -3,6 +3,8 @@ package openai
 import (
 	"context"
 	"encoding/json"
+
+	"agr/transformer/tctx"
 )
 
 // transformToClaudeStreamChunk 将 OpenAI 流式 chunk 转换为 Anthropic SSE 事件
@@ -15,7 +17,7 @@ func (t *Transformer) transformToClaudeStreamChunk(ctx context.Context, chunk []
 
 	// 提取 usage 信息（OpenAI 在最后一个 chunk 中返回 usage）
 	if usage, ok := data["usage"].(map[string]any); ok {
-		if state, _ := ctx.Value(StreamStateKey).(*StreamState); state != nil {
+		if state, _ := ctx.Value(tctx.StreamStateKey).(*tctx.StreamState); state != nil {
 			if pt, ok := usage["prompt_tokens"].(float64); ok {
 				state.InputTokens = int(pt)
 			}
@@ -65,7 +67,7 @@ func (t *Transformer) transformToClaudeStreamChunk(ctx context.Context, chunk []
 		},
 	}
 
-	if state, _ := ctx.Value(StreamStateKey).(*StreamState); state != nil {
+	if state, _ := ctx.Value(tctx.StreamStateKey).(*tctx.StreamState); state != nil {
 		events := t.ensureTextBlockStarted(state)
 		events = append(events, eventWithIndex(event, state.TextBlockIndex))
 		return json.Marshal(events)
@@ -84,7 +86,7 @@ func (t *Transformer) handleReasoningContentDelta(ctx context.Context, reasoning
 		},
 	}
 
-	state, _ := ctx.Value(StreamStateKey).(*StreamState)
+	state, _ := ctx.Value(tctx.StreamStateKey).(*tctx.StreamState)
 	if state == nil {
 		return json.Marshal(event)
 	}
@@ -94,7 +96,7 @@ func (t *Transformer) handleReasoningContentDelta(ctx context.Context, reasoning
 	return json.Marshal(events)
 }
 
-func (t *Transformer) ensureTextBlockStarted(state *StreamState) []map[string]any {
+func (t *Transformer) ensureTextBlockStarted(state *tctx.StreamState) []map[string]any {
 	var events []map[string]any
 	events = append(events, stopOpenThinkingBlock(state)...)
 	if state.TextBlockStarted {
@@ -111,7 +113,7 @@ func (t *Transformer) ensureTextBlockStarted(state *StreamState) []map[string]an
 	return events
 }
 
-func (t *Transformer) ensureThinkingBlockStarted(state *StreamState) []map[string]any {
+func (t *Transformer) ensureThinkingBlockStarted(state *tctx.StreamState) []map[string]any {
 	var events []map[string]any
 	events = append(events, stopOpenTextBlock(state)...)
 	if state.ThinkingBlockStarted {
@@ -133,7 +135,7 @@ func (t *Transformer) ensureThinkingBlockStarted(state *StreamState) []map[strin
 
 // HandleToolCallDelta 处理流式 tool_calls delta，组装为 Anthropic tool_use 事件
 func (t *Transformer) HandleToolCallDelta(ctx context.Context, toolCallsRaw []any, clientModel string) ([]byte, error) {
-	state, _ := ctx.Value(StreamStateKey).(*StreamState)
+	state, _ := ctx.Value(tctx.StreamStateKey).(*tctx.StreamState)
 
 	var events []map[string]any
 	if state != nil {

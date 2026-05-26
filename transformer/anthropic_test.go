@@ -3,13 +3,11 @@ package transformer
 import (
 	"context"
 	"testing"
-
-	"agr/transformer/openai"
 )
 
 func TestAnthropic_AnthroMessagesRequest_PassThrough(t *testing.T) {
 	tr := &AnthropicTransformer{}
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/messages")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/messages")
 	body := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`)
 
 	result, err := tr.TransformRequest(ctx, body)
@@ -23,7 +21,7 @@ func TestAnthropic_AnthroMessagesRequest_PassThrough(t *testing.T) {
 
 func TestAnthropic_CodexRequest_Error(t *testing.T) {
 	tr := &AnthropicTransformer{}
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/responses")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/responses")
 	body := []byte(`{"model":"gpt-4","input":"hello"}`)
 
 	_, err := tr.TransformRequest(ctx, body)
@@ -66,7 +64,7 @@ func TestAnthropic_InChain_BlocksCodex(t *testing.T) {
 		t.Fatalf("创建 Chain 失败: %v", err)
 	}
 
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/responses")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/responses")
 	body := []byte(`{"model":"gpt-4"}`)
 
 	_, err = chain.TransformRequest(ctx, body)
@@ -81,7 +79,7 @@ func TestAnthropic_InChain_AllowsAnthropic(t *testing.T) {
 		t.Fatalf("创建 Chain 失败: %v", err)
 	}
 
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/messages")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/messages")
 	body := []byte(`{"model":"claude-3"}`)
 
 	result, err := chain.TransformRequest(ctx, body)
@@ -115,7 +113,7 @@ func TestIsCodexRequest(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		ctx := context.WithValue(context.Background(), openai.RequestPathKey, tt.path)
+		ctx := context.WithValue(context.Background(), RequestPathKey, tt.path)
 		if got := isCodexRequest(ctx); got != tt.want {
 			t.Errorf("isCodexRequest(%q) = %v, want %v", tt.path, got, tt.want)
 		}

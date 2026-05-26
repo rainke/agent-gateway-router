@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"agr/transformer/openai"
+	"agr/transformer/tctx"
 )
 
 // AnthropicTransformer 只允许 Anthropic Messages API 请求通过，
@@ -23,7 +23,7 @@ func (t *AnthropicTransformer) TransformRequest(ctx context.Context, body []byte
 		return body, nil
 	}
 
-	if upstreamModel, _ := ctx.Value(openai.UpstreamModelKey).(string); upstreamModel != "" {
+	if upstreamModel, _ := ctx.Value(tctx.UpstreamModelKey).(string); upstreamModel != "" {
 		req["model"] = upstreamModel
 		return json.Marshal(req)
 	}
@@ -40,6 +40,6 @@ func (t *AnthropicTransformer) TransformStream(ctx context.Context, chunk []byte
 }
 
 func isCodexRequest(ctx context.Context) bool {
-	path, _ := ctx.Value(openai.RequestPathKey).(string)
+	path, _ := ctx.Value(tctx.RequestPathKey).(string)
 	return strings.Contains(path, "/v1/responses")
 }

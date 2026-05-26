@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-
-	"agr/transformer/openai"
 )
 
 func TestGet_ValidTransformer(t *testing.T) {
@@ -96,8 +94,8 @@ func TestChain_TransformStream_Passthrough(t *testing.T) {
 
 func TestChain_TransformRequest_WithTransformer(t *testing.T) {
 	chain, _ := NewChain([]string{"openai"})
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/v1/messages")
-	ctx = context.WithValue(ctx, openai.UpstreamModelKey, "real-model")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/v1/messages")
+	ctx = context.WithValue(ctx, UpstreamModelKey, "real-model")
 
 	body := []byte(`{"model":"client-model","messages":[{"role":"user","content":"hello"}],"max_tokens":100,"stream":false}`)
 
@@ -160,7 +158,7 @@ func TestChain_MultipleTransformers_Order(t *testing.T) {
 		t.Fatalf("创建 Chain 失败: %v", err)
 	}
 
-	ctx := context.WithValue(context.Background(), openai.RequestPathKey, "/unknown")
+	ctx := context.WithValue(context.Background(), RequestPathKey, "/unknown")
 	body := []byte(`{"test": true}`)
 
 	// 未知路径透传，两次透传结果应相同

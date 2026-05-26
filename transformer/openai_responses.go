@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"agr/transformer/openai"
+	"agr/transformer/tctx"
 )
 
 // OpenAIResponsesTransformer 只允许 Codex (OpenAI Responses API) 请求通过，
@@ -22,7 +22,7 @@ func (t *OpenAIResponsesTransformer) TransformRequest(ctx context.Context, body 
 		return body, nil
 	}
 
-	if upstreamModel, _ := ctx.Value(openai.UpstreamModelKey).(string); upstreamModel != "" {
+	if upstreamModel, _ := ctx.Value(tctx.UpstreamModelKey).(string); upstreamModel != "" {
 		req["model"] = upstreamModel
 		return json.Marshal(req)
 	}

@@ -3,6 +3,8 @@ package openai
 import (
 	"fmt"
 	"strings"
+
+	"agr/transformer/tctx"
 )
 
 // ExtractToolResultContent 从 tool_result 的 content 中提取文本
@@ -30,14 +32,14 @@ func ExtractToolResultContent(content any) string {
 	}
 }
 
-func allocateContentBlock(state *StreamState) int {
+func allocateContentBlock(state *tctx.StreamState) int {
 	state.BlockIndex++
 	ensureOpenBlocks(state)
 	state.OpenBlocks[state.BlockIndex] = true
 	return state.BlockIndex
 }
 
-func ensureOpenBlocks(state *StreamState) {
+func ensureOpenBlocks(state *tctx.StreamState) {
 	if state.OpenBlocks == nil {
 		state.OpenBlocks = make(map[int]bool)
 	}
@@ -48,21 +50,21 @@ func eventWithIndex(event map[string]any, index int) map[string]any {
 	return event
 }
 
-func stopOpenTextBlock(state *StreamState) []map[string]any {
+func stopOpenTextBlock(state *tctx.StreamState) []map[string]any {
 	if !state.TextBlockStarted {
 		return nil
 	}
 	return stopOpenBlock(state, state.TextBlockIndex)
 }
 
-func stopOpenThinkingBlock(state *StreamState) []map[string]any {
+func stopOpenThinkingBlock(state *tctx.StreamState) []map[string]any {
 	if !state.ThinkingBlockStarted {
 		return nil
 	}
 	return stopOpenBlock(state, state.ThinkingBlockIndex)
 }
 
-func stopOpenBlock(state *StreamState, index int) []map[string]any {
+func stopOpenBlock(state *tctx.StreamState, index int) []map[string]any {
 	ensureOpenBlocks(state)
 	if !state.OpenBlocks[index] {
 		return nil

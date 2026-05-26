@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"agr/transformer/tctx"
 )
 
 func makeCodexCtx(clientModel string) context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, RequestPathKey, "/v1/responses")
-	ctx = context.WithValue(ctx, ClientModelKey, clientModel)
+	ctx = context.WithValue(ctx, tctx.RequestPathKey, "/v1/responses")
+	ctx = context.WithValue(ctx, tctx.ClientModelKey, clientModel)
 	return ctx
 }
 

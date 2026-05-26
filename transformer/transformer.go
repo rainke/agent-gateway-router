@@ -5,7 +5,23 @@ import (
 	"fmt"
 
 	"agr/transformer/openai"
+	"agr/transformer/tctx"
 )
+
+// 从 tctx 包重新导出共享类型和常量，保持公共 API 不变
+type ContextKey = tctx.ContextKey
+
+const (
+	RequestPathKey     = tctx.RequestPathKey
+	UpstreamModelKey   = tctx.UpstreamModelKey
+	ClientModelKey     = tctx.ClientModelKey
+	StreamStateKey     = tctx.StreamStateKey
+	RequestMetadataKey = tctx.RequestMetadataKey
+)
+
+type RequestMetadata = tctx.RequestMetadata
+type StreamState = tctx.StreamState
+type ToolCallAccumulator = tctx.ToolCallAccumulator
 
 // Transformer 请求/响应转换接口
 type Transformer interface {

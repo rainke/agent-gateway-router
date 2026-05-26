@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"agr/transformer/tctx"
 )
 
 func makeCtx(path, upstreamModel, clientModel string) context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, RequestPathKey, path)
-	ctx = context.WithValue(ctx, UpstreamModelKey, upstreamModel)
-	ctx = context.WithValue(ctx, ClientModelKey, clientModel)
-	ctx = context.WithValue(ctx, RequestMetadataKey, &RequestMetadata{})
+	ctx = context.WithValue(ctx, tctx.RequestPathKey, path)
+	ctx = context.WithValue(ctx, tctx.UpstreamModelKey, upstreamModel)
+	ctx = context.WithValue(ctx, tctx.ClientModelKey, clientModel)
+	ctx = context.WithValue(ctx, tctx.RequestMetadataKey, &tctx.RequestMetadata{})
 	return ctx
 }
 
@@ -63,7 +65,7 @@ func TestTransformClaudeRequest_ReasoningMarksMetadata(t *testing.T) {
 		t.Fatalf("TransformRequest 失败: %v", err)
 	}
 
-	metadata, _ := ctx.Value(RequestMetadataKey).(*RequestMetadata)
+	metadata, _ := ctx.Value(tctx.RequestMetadataKey).(*tctx.RequestMetadata)
 	// x-reasoning-included 只针对 /v1/responses 接口，/v1/messages 不应标记
 	if metadata != nil && metadata.ReasoningIncluded {
 		t.Fatal("reasoning 内容不应在 /v1/messages 中标记为已包含")
@@ -490,8 +492,8 @@ func TestTransformToClaudeStreamChunk_TextDelta(t *testing.T) {
 func TestTransformToClaudeStreamChunk_ReasoningContentDelta(t *testing.T) {
 	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
-	state := &StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
-	ctx = context.WithValue(ctx, StreamStateKey, state)
+	state := &tctx.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
+	ctx = context.WithValue(ctx, tctx.StreamStateKey, state)
 
 	chunk := `{"choices":[{"index":0,"delta":{"reasoning_content":"I should inspect the code."},"finish_reason":null}]}`
 
@@ -532,8 +534,8 @@ func TestTransformToClaudeStreamChunk_ReasoningContentDelta(t *testing.T) {
 func TestTransformToClaudeStreamChunk_TextAfterReasoningStartsTextBlock(t *testing.T) {
 	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
-	state := &StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
-	ctx = context.WithValue(ctx, StreamStateKey, state)
+	state := &tctx.StreamState{BlockIndex: -1, OpenBlocks: make(map[int]bool)}
+	ctx = context.WithValue(ctx, tctx.StreamStateKey, state)
 
 	reasoningChunk := `{"choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}`
 	if _, err := tr.TransformStream(ctx, []byte(reasoningChunk)); err != nil {
@@ -645,8 +647,8 @@ func TestTransformToClaudeStreamChunk_InvalidJSON(t *testing.T) {
 func TestTransformToClaudeStreamChunk_ToolCallDelta(t *testing.T) {
 	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
-	state := &StreamState{BlockIndex: 0}
-	ctx = context.WithValue(ctx, StreamStateKey, state)
+	state := &tctx.StreamState{BlockIndex: 0}
+	ctx = context.WithValue(ctx, tctx.StreamStateKey, state)
 
 	// 第一个 chunk：tool call 开始
 	chunk := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":""}}]},"finish_reason":null}]}`
@@ -684,8 +686,8 @@ func TestTransformToClaudeStreamChunk_ToolCallDelta(t *testing.T) {
 func TestTransformToClaudeStreamChunk_ToolCallArgsDelta(t *testing.T) {
 	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
-	state := &StreamState{BlockIndex: 1}
-	ctx = context.WithValue(ctx, StreamStateKey, state)
+	state := &tctx.StreamState{BlockIndex: 1}
+	ctx = context.WithValue(ctx, tctx.StreamStateKey, state)
 
 	// arguments 增量 chunk
 	chunk := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":"}}]},"finish_reason":null}]}`
@@ -716,8 +718,8 @@ func TestTransformToClaudeStreamChunk_ToolCallArgsDelta(t *testing.T) {
 func TestTransformToClaudeStreamChunk_ToolCallArgsDeltaWithFinishReason(t *testing.T) {
 	tr := &Transformer{}
 	ctx := makeCtx("/v1/messages", "", "claude-3")
-	state := &StreamState{BlockIndex: 1}
-	ctx = context.WithValue(ctx, StreamStateKey, state)
+	state := &tctx.StreamState{BlockIndex: 1}
+	ctx = context.WithValue(ctx, tctx.StreamStateKey, state)
 
 	chunk := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}`
 
@@ -1563,7 +1565,7 @@ func TestTransformCodexRequest_ReasoningMarksMetadata(t *testing.T) {
 		t.Fatalf("TransformRequest 失败: %v", err)
 	}
 
-	metadata, _ := ctx.Value(RequestMetadataKey).(*RequestMetadata)
+	metadata, _ := ctx.Value(tctx.RequestMetadataKey).(*tctx.RequestMetadata)
 	if metadata == nil || !metadata.ReasoningIncluded {
 		t.Fatal("reasoning 内容应标记为已包含")
 	}
