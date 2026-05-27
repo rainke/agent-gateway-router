@@ -45,3 +45,7 @@ The `transformer/` package uses a Chain-of-Responsibility pattern. Each provider
 ## Security & Configuration Tips
 
 Treat `api_key` values in TOML as secrets. Use local-only config files or redacted examples when documenting providers. Do not log full authorization headers or upstream response bodies that may contain sensitive data.
+
+## Development Preferences
+
+- **Default to TDD workflow**: Unless explicitly stated otherwise, all development tasks (new features, bug fixes, refactoring) should follow the `tdd-workflow` skill — write tests first, then implement, ensuring 80%+ coverage (unit, integration, and end-to-end tests).

@@ -293,21 +293,24 @@ name = "AgentGateway"
 base_url = "http://localhost:9999/v1"
 wire_api = "responses"
 requires_openai_auth = false
+```
 
-[profiles.agr]
+创建 `~/.codex/agr.config.toml`，保存 agr profile：
+
+```toml
 model = "mimo-v2.5-pro"
 model_provider = "agr"
 model_reasoning_effort = "medium"
 ```
 
-启动 Codex 时指定 agr 配置文件：
+启动 Codex 时指定 agr profile：
 
 ```bash
 codex -p agr
 ```
 
 
-> **提示**：`-p agr` 表示使用 `~/.codex/config.toml` 中的 `[profiles.agr]` 配置。Codex 走 `/v1/responses` 端点，使用 OpenAI Responses API 协议。如果上游提供商支持 Responses API（如 FreeModel），使用 `transformer = ["openai-responses"]` 配置。
+> **提示**：Codex 0.134.0 起，`-p agr` 会在 `~/.codex/config.toml` 之上叠加读取 `~/.codex/agr.config.toml`，不再读取 `~/.codex/config.toml` 中的 `[profiles.agr]`。Codex 走 `/v1/responses` 端点，使用 OpenAI Responses API 协议。如果上游提供商支持 Responses API（如 FreeModel），使用 `transformer = ["openai-responses"]` 配置。
 
 ### Codex 模型元数据（models_config.json）
 
