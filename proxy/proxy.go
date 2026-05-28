@@ -99,6 +99,7 @@ func (p *Proxy) HandleNotImplemented(w http.ResponseWriter, r *http.Request) {
 
 // HandleModels 处理 /v1/models 请求，返回模型元数据列表
 func (p *Proxy) HandleModels(w http.ResponseWriter, r *http.Request) {
+	slog.Info("收到 models 请求", "method", r.Method, "path", r.URL.Path)
 	resp, err := models.LoadModels(p.cfg)
 	if err != nil {
 		slog.Error("加载模型列表失败", "error", err)

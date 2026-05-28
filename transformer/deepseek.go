@@ -21,6 +21,9 @@ func (t *DeepSeekTransformer) TransformRequest(ctx context.Context, body []byte)
 	}
 
 	// 仅当客户端未请求 reasoning（reasoning 为空或 effort 为 none）时禁用 thinking mode
+	if v, ok := req["reasoning_effort"].(string); ok && v == "xhigh" {
+		req["reasoning_effort"] = "max"
+	}
 	effort, _ := req["reasoning_effort"].(string)
 	if effort == "" || effort == "none" {
 		req["thinking"] = map[string]any{"type": "disabled"}
