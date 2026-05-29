@@ -152,6 +152,18 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	ctx = context.WithValue(ctx, tctx.ClientModelKey, clientModel)
 	ctx = context.WithValue(ctx, tctx.RequestMetadataKey, &tctx.RequestMetadata{})
 
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.Canceled {
+			slog.Warn("客户端取消了请求",
+				"path", path,
+				"model", clientModel,
+				"provider", result.Provider.Name,
+				"reason", "客户端主动断开连接",
+			)
+		}
+	}()
+
 	slog.Debug("转换前的请求体", "body", string(body))
 
 	// 执行请求转换
