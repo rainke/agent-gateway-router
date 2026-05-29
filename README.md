@@ -1,6 +1,6 @@
 # agr — AI Gateway Router
 
-**agr** 是一个用 Go 编写的轻量级本地 AI 网关代理。它作为后台守护进程运行，位于本地 AI 客户端（Claude Code、Codex、VS Code Copilot）和上游 LLM 提供商之间，处理协议适配、模型路由、流式响应转发以及请求/响应转换。
+**agr** 是一个用 Go 编写的轻量级本地 AI 网关代理。它作为后台守护进程运行，位于本地 AI 客户端（Claude Code、Codex、VS Code Copilot 等）和上游 LLM 提供商之间，处理协议适配、模型路由、流式响应转发以及请求/响应转换。
 
 ## 为什么需要 agr？
 
@@ -9,18 +9,18 @@
 | 不同 AI 客户端使用不同协议（Anthropic Messages vs OpenAI Responses vs OpenAI Chat） | 自动协议转换，同一端口同时服务 Claude Code 和 Codex |
 | 想把 Claude Code 的请求转发到 DeepSeek / GLM / Mimo 等国产模型 | 声明式路由配置，一条映射搞定 |
 | 每个客户端都要单独配置 API Key 和 Base URL | 统一网关入口，客户端只需指向 `localhost:9999` |
-| DeepSeek 的 thinking 格式与 Anthropic 不兼容 | 转换器链自动处理 `reasoning_content` ↔ `thinking` 映射 |
+| DeepSeek 的 thinking 格式与 Anthropic 不兼容 | `openai` 转换器处理 thinking ↔ `reasoning_content` 映射，`deepseek` 转换器按 reasoning_effort 控制 thinking 开关 |
 | 需要在多个提供商之间切换或做 fallback | 按模型名精确路由，未命中时回退到默认提供商 |
 
 ## 架构总览
 
 ```
-┌─────────────────┐  ┌──────────────┐  ┌─────────────────┐
-│   Claude Code   │  │    Codex     │  │  VS Code Copilot │
-│  (/v1/messages) │  │(/v1/responses)│  │  (Phase 2)       │
-└────────┬────────┘  └──────┬───────┘  └────────┬─────────┘
-         │                  │                    │
-         ▼                  ▼                    ▼
+┌─────────────────┐  ┌──────────────┐  ┌─────────────────────────┐
+│   Claude Code   │  │    Codex     │  │ VS Code Copilot / 其他  │
+│  (/v1/messages) │  │(/v1/responses)│  │ (/v1/chat/completions)  │
+└────────┬────────┘  └──────┬───────┘  └────────────┬────────────┘
+         │                  │                       │
+         ▼                  ▼                       ▼
     ┌──────────────────────────────────────────────────┐
     │                  localhost:9999                   │
     │                                                  │
@@ -390,7 +390,7 @@ Codex 在启动时调用 `/v1/models` 发现可用模型。`models_config.json` 
 | 名称 | 用途 | 典型场景 |
 |------|------|----------|
 | `openai` | 核心协议转换器。根据请求路径分流：`/v1/messages` ↔ Anthropic Messages，`/v1/responses` ↔ OpenAI Responses，其他路径透传 | 大多数 OpenAI 兼容提供商的首选 |
-| `deepseek` | 处理 DeepSeek 特有的 `reasoning_content` 格式。非 Claude 请求注入 `thinking: {disabled}`；Claude 请求将 thinking 块提取为 `reasoning_content` | 配合 `openai` 一起用于 DeepSeek |
+| `deepseek` | DeepSeek thinking 模式控制。按 `reasoning_effort` 决定是否禁用 thinking：空或 `none` 时注入 `thinking: {disabled}`，`low`/`medium`/`high` 时保留；`xhigh` 映射为 `max`。Claude Messages 请求直接跳过 | 配合 `openai` 一起用于 DeepSeek |
 | `anthropic` | 透传 Claude（Messages API）请求，拒绝 Codex（Responses API）请求 | 上游仅支持 Anthropic 协议时使用 |
 | `openai-responses` | 透传 Codex（Responses API）请求，拒绝 Claude（Messages API）请求 | 上游仅支持 Responses API 时使用 |
 
@@ -460,11 +460,10 @@ transformer = ["openai-responses"]
 |------|------|-----------|------|
 | `/v1/messages` | Anthropic Messages API | Claude Code | ✅ 已实现 |
 | `/v1/responses` | OpenAI Responses API | Codex | ✅ 已实现 |
-| `/v1/models` | OpenAI Models API | Codex 模型发现 | ✅ 已实现 |
+| `/v1/models` | OpenAI Models API | 模型发现 | ✅ 已实现 |
 | `/health` | — | 健康检查 | ✅ 已实现 |
-| `/api/chat` | Ollama Chat | VS Code Copilot | 🚧 Phase 2 |
-| `/api/generate` | Ollama Generate | VS Code Copilot | 🚧 Phase 2 |
-| `/api/tags` | Ollama Tags | VS Code Copilot | 🚧 Phase 2 |
+
+> **VS Code Copilot 集成**：VS Code 1.122+ 原生支持自定义 OpenAI 兼容端点，无需 Ollama 协议伪装。在 VS Code 设置中配置 `chat.agent.customEndpoint` 指向 `http://localhost:9999` 即可。
 
 ## 典型部署场景
 
@@ -646,7 +645,7 @@ type Transformer interface {
 使用 Conventional Commits：
 
 ```
-feat: add Ollama compatibility endpoints
+feat: add VS Code Copilot custom endpoint support
 fix: handle empty streaming chunks from DeepSeek
 test: add table-driven tests for transformer chain
 refactor: extract request path detection into router
@@ -693,10 +692,14 @@ agr start -p 8080
 
 在路由配置中为不同模型设置不同提供商，Claude Code 请求走 Anthropic 协议端点，Codex 走 Responses 协议端点，agr 自动处理协议差异。参考上方"场景 2"。
 
+**Q: VS Code Copilot 如何连接网关？**
+
+VS Code 1.122+ 原生支持自定义端点，在设置中配置 `chat.agent.customEndpoint` 为 `http://localhost:9999` 即可。
+
 ## 路线图
 
-- [x] Phase 1：核心网关能力（Claude Code + Codex 代理）
-- [ ] Phase 2：Ollama 协议兼容（VS Code Copilot 支持）
+- [x] 核心网关能力（Claude Code + Codex 代理）
+- [x] VS Code Copilot 自定义端点支持（≥1.122）
 - [ ] 多提供商 fallback
 - [ ] 请求速率限制
 - [ ] Web UI 管理面板

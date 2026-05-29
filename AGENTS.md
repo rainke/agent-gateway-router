@@ -36,7 +36,7 @@ The `transformer/` package uses a Chain-of-Responsibility pattern. Each provider
 **Built-in transformers:**
 
 - `openai` — Core protocol converter. Routes by `RequestPathKey` in context: `/v1/messages` → Anthropic Messages ↔ OpenAI Chat Completions, `/v1/responses` → OpenAI Responses ↔ Chat Completions, other paths → passthrough.
-- `deepseek` — Injects `thinking: {type: "disabled"}` for non-Claude requests; extracts Claude thinking blocks into `reasoning_content` for Claude requests so DeepSeek preserves them.
+- `deepseek` — DeepSeek thinking 模式控制。按 `reasoning_effort` 决定是否禁用 thinking：空或 `none` 时注入 `thinking: {disabled}`，`low`/`medium`/`high` 时保留，`xhigh` 映射为 `max`。Claude Messages 请求直接跳过（由 `openai` 转换器处理 thinking ↔ reasoning_content 映射）。
 - `anthropic` — Blocks Codex (Responses API) requests with an error; passes Claude (Messages API) requests through. Use it on providers that only serve Anthropic clients.
 - `openai-responses` — The inverse: blocks Claude (Messages API) requests; passes Codex (Responses API) requests through. Use it on providers that only serve Codex clients.
 
