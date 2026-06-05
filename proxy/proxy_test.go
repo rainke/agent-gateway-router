@@ -6,12 +6,24 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"agr/config"
 	"agr/router"
 )
+
+func TestMain(m *testing.M) {
+	// 全局设置 usageDir 为临时目录，避免测试写入生产 ~/.agr/usage/
+	dir := filepath.Join("/tmp", "agr-usage-test", "global")
+	os.RemoveAll(dir)
+	usageDir = dir
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 func newTestProxy(upstreamURL string) *Proxy {
 	cfg := &config.Config{

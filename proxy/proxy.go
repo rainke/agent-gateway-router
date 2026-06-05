@@ -211,17 +211,20 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	isStream := strings.Contains(contentType, "text/event-stream") ||
 		strings.Contains(contentType, "text/stream")
 
+	providerName := result.Provider.Name
+	upstreamModel := result.Model
+
 	if isStream {
 		// 根据客户端协议选择不同的流式响应处理
 		if strings.Contains(path, "/v1/messages") {
-			p.handleClaudeStreamResponse(ctx, w, resp, chain, clientModel)
+			p.handleClaudeStreamResponse(ctx, w, resp, chain, clientModel, providerName, upstreamModel)
 		} else if strings.Contains(path, "/v1/responses") {
-			p.handleCodexStreamResponse(ctx, w, resp, chain, clientModel)
+			p.handleCodexStreamResponse(ctx, w, resp, chain, clientModel, providerName, upstreamModel)
 		} else {
-			p.handleStreamResponse(ctx, w, resp, chain)
+			p.handleStreamResponse(ctx, w, resp, chain, providerName, upstreamModel)
 		}
 	} else {
-		p.handleNormalResponse(ctx, w, resp, chain)
+		p.handleNormalResponse(ctx, w, resp, chain, providerName, upstreamModel)
 	}
 }
 
@@ -258,7 +261,7 @@ func markReasoningFromTransformedBody(ctx context.Context, body []byte) {
 }
 
 // handleClaudeStreamResponse 处理 Claude 客户端的流式响应，输出 Anthropic SSE 格式
-func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, clientModel string) {
+func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, clientModel, providerName, upstreamModel string) {
 	// 设置流式响应头
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -303,6 +306,8 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	var lastUsage map[string]any
+
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -322,6 +327,9 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 		}
 
 		slog.Debug("上游原始 SSE chunk", "data", data)
+
+		// 提取上游 usage（在 transformer 转换之前）
+		extractAndRecordUsageFromChunk([]byte(data), providerName, upstreamModel, &lastUsage)
 
 		// 检查 finish_reason 以确定 stop_reason
 		var rawChunk map[string]any
@@ -437,10 +445,13 @@ func (p *Proxy) handleClaudeStreamResponse(ctx context.Context, w http.ResponseW
 	msgStopJSON, _ := json.Marshal(msgStop)
 	fmt.Fprintf(w, "event: message_stop\ndata: %s\n\n", msgStopJSON)
 	flusher.Flush()
+
+	// 记录 usage
+	flushUsageRecord(lastUsage, providerName, upstreamModel)
 }
 
 // handleCodexStreamResponse 处理 Codex (Responses API) 客户端的流式响应
-func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, clientModel string) {
+func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, clientModel, providerName, upstreamModel string) {
 	// 设置流式响应头
 	writeReasoningHeader(ctx, w)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -478,6 +489,8 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	var lastUsage map[string]any
+
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -497,6 +510,9 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 		}
 
 		slog.Debug("上游原始 SSE chunk (codex)", "data", data)
+
+		// 提取上游 usage（在 transformer 转换之前）
+		extractAndRecordUsageFromChunk([]byte(data), providerName, upstreamModel, &lastUsage)
 
 		// 通过 Transformer 链转换 chunk，得到多个 Responses API 事件
 		events, err := chain.TransformCodexStream(ctx, []byte(data))
@@ -536,13 +552,16 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 		state.Finished = false
 	}
 
+	// 记录 usage
+	flushUsageRecord(lastUsage, providerName, upstreamModel)
+
 	// 发送 [DONE] 标记
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }
 
 // handleStreamResponse 处理通用流式响应（非 Claude 客户端）
-func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain) {
+func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, providerName, upstreamModel string) {
 	// 设置流式响应头
 	writeReasoningHeader(ctx, w)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -560,6 +579,8 @@ func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter,
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	var lastUsage map[string]any
+
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -576,6 +597,11 @@ func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter,
 			fmt.Fprintf(w, "%s\n", line)
 			flusher.Flush()
 			continue
+		}
+
+		// 提取上游 usage（在 transformer 转换之前）
+		if data != "[DONE]" {
+			extractAndRecordUsageFromChunk([]byte(data), providerName, upstreamModel, &lastUsage)
 		}
 
 		// 检查流结束标记
@@ -604,10 +630,13 @@ func (p *Proxy) handleStreamResponse(ctx context.Context, w http.ResponseWriter,
 	if err := scanner.Err(); err != nil {
 		slog.Error("读取流式响应失败", "error", err)
 	}
+
+	// 记录 usage
+	flushUsageRecord(lastUsage, providerName, upstreamModel)
 }
 
 // handleNormalResponse 处理非流式响应
-func (p *Proxy) handleNormalResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain) {
+func (p *Proxy) handleNormalResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, chain *transformer.Chain, providerName, upstreamModel string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		p.writeError(w, http.StatusBadGateway, "读取上游响应失败: "+err.Error())
@@ -615,6 +644,9 @@ func (p *Proxy) handleNormalResponse(ctx context.Context, w http.ResponseWriter,
 	}
 
 	slog.Debug("上游原始响应", "body", string(body))
+
+	// 提取上游 usage（在 transformer 转换之前，兼容 OpenAI 和 Anthropic 格式）
+	extractUsageFromBody(body, providerName, upstreamModel)
 
 	// 通过 Transformer 链转换响应
 	transformed, err := chain.TransformResponse(ctx, body)
