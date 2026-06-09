@@ -232,3 +232,13 @@ func flushUsageRecord(lastUsage map[string]any, provider, model string) {
 	record := extractUsageFromMap(lastUsage, provider, model)
 	recordUsage(record)
 }
+
+// UsageDir 返回 usage 文件存储目录路径。
+// 优先使用自定义目录（用于测试），否则返回 ~/.agr/usage/。
+func UsageDir() string {
+	if usageDir != "" {
+		return usageDir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".agr", "usage")
+}
