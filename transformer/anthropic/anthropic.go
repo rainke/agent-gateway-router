@@ -17,9 +17,9 @@ const openaiStreamStateKey tctx.ContextKey = "anthropic_codex_stream_state"
 type StreamState struct {
 	ResponseID string
 	Model      string
-	Started    bool   // 是否已发送 response.created / in_progress
-	Seq        int    // 序列号
-	OutputIndex int   // 当前 output item 索引
+	Started    bool // 是否已发送 response.created / in_progress
+	Seq        int  // 序列号
+	OutputIndex int // 当前 output item 索引
 
 	// 文本消息
 	MessageItemIndex int  // 文本 message 在 output 中的索引
@@ -27,9 +27,10 @@ type StreamState struct {
 	AccumulatedText  string
 
 	// Reasoning
-	ReasoningItemIndex int
-	ReasoningStarted   bool
-	AccumulatedReasoning string
+	ReasoningItemIndex    int
+	ReasoningStarted      bool
+	AccumulatedReasoning  string
+	ReasoningSummaryIndex int
 
 	// Tool calls
 	FunctionCalls []FunctionCall
@@ -65,16 +66,18 @@ func New() *Transformer {
 
 // TransformRequest 转换 Codex 请求到 Anthropic Messages API 请求格式
 func (t *Transformer) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
-	return body, nil
+	upstreamModel, _ := ctx.Value(tctx.UpstreamModelKey).(string)
+	return transformCodexToMessagesRequest(ctx, body, upstreamModel)
 }
 
 // TransformResponse 转换 Anthropic Messages API 响应到 Codex Responses API 响应
 func (t *Transformer) TransformResponse(ctx context.Context, body []byte) ([]byte, error) {
-	return body, nil
+	clientModel, _ := ctx.Value(tctx.ClientModelKey).(string)
+	return transformMessagesToCodexResponse(body, clientModel)
 }
 
 // TransformStream 转换 Anthropic SSE chunk 为 Codex SSE chunk。
 // 返回特殊格式：单 JSON 对象或多 JSON 数组，proxy 层会拆分为独立 SSE 事件。
 func (t *Transformer) TransformStream(ctx context.Context, chunk []byte) ([]byte, error) {
-	return chunk, nil
+	return t.streamChunk(ctx, chunk)
 }

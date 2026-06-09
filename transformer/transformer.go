@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"agr/transformer/anthropic"
 	"agr/transformer/openai"
 	"agr/transformer/tctx"
 )
@@ -108,7 +109,7 @@ func (c *Chain) TransformCodexStream(ctx context.Context, chunk []byte) ([][]byt
 var registry = map[string]func() Transformer{
 	"openai":           func() Transformer { return &openai.Transformer{} },
 	"deepseek":         func() Transformer { return &DeepSeekTransformer{} },
-	"anthropic":        func() Transformer { return &AnthropicTransformer{} },
+	"anthropic":        func() Transformer { return anthropic.New() },
 	"openai-responses": func() Transformer { return &OpenAIResponsesTransformer{} },
 }
 
