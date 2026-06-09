@@ -82,8 +82,7 @@ func (t *Transformer) streamChunk(ctx context.Context, chunk []byte) ([]byte, er
 	return json.Marshal(rawArr)
 }
 
-// clientModelKey 是占位符，实际使用 tctx.ClientModelKey（在 anthropic.go 中已使用）
-type clientModelKey struct{}// splitSSEFrames 将完整的 SSE 数据按 \n\n 切分为多个 frame
+// splitSSEFrames 将完整的 SSE 数据按 \n\n 切分为多个 frame
 func splitSSEFrames(data []byte) [][]byte {
 	var frames [][]byte
 	start := 0
@@ -392,7 +391,6 @@ func handleMessageDelta(state *StreamState, payload map[string]any) ([][]byte, e
 		if ct, ok := usage["output_tokens"].(float64); ok {
 			state.OutputTokens = int(ct)
 		}
-		state.HasUsage = true
 	}
 
 	// 提取 stop_reason
@@ -408,8 +406,25 @@ func handleMessageDelta(state *StreamState, payload map[string]any) ([][]byte, e
 	state.FinishStatus = mapAnthropicStopReasonToCodexStatus(sr, len(state.FunctionCalls) > 0)
 	state.Finished = true
 
-	// 关闭文本 message（如已开）
+	return emitCodexCompleted(state), nil
+}
+
+// handleMessageStop 处理 message_stop 事件
+// 关闭所有打开的 output item，发出 response.completed
+func handleMessageStop(state *StreamState, _ map[string]any) ([][]byte, error) {
+	status := state.FinishStatus
+	if status == "" {
+		status = "completed"
+	}
+	state.FinishStatus = status
+	return emitCodexCompleted(state), nil
+}
+
+// emitCodexCompleted 关闭文本 message 并发出 response.completed
+func emitCodexCompleted(state *StreamState) [][]byte {
 	var events [][]byte
+
+	// 关闭文本 message
 	if state.MessageStarted {
 		state.Seq++
 		events = append(events, mustMarshal(map[string]any{
@@ -454,64 +469,7 @@ func handleMessageDelta(state *StreamState, payload map[string]any) ([][]byte, e
 	events = append(events, mustMarshal(completed))
 	state.Finished = false
 
-	return events, nil
-}
-
-// handleMessageStop 处理 message_stop 事件
-// 关闭所有打开的 output item，发出 response.completed
-func handleMessageStop(state *StreamState, _ map[string]any) ([][]byte, error) {
-	var events [][]byte
-
-	// 关闭文本 message
-	if state.MessageStarted {
-		state.Seq++
-		events = append(events, mustMarshal(map[string]any{
-			"type":            "response.output_text.done",
-			"sequence_number": state.Seq,
-			"output_index":    state.MessageItemIndex,
-			"content_index":   0,
-			"text":            state.AccumulatedText,
-		}))
-		state.Seq++
-		events = append(events, mustMarshal(map[string]any{
-			"type":            "response.content_part.done",
-			"sequence_number": state.Seq,
-			"output_index":    state.MessageItemIndex,
-			"content_index":   0,
-			"part": map[string]any{
-				"type": "output_text",
-				"text": state.AccumulatedText,
-			},
-		}))
-		state.Seq++
-		events = append(events, mustMarshal(map[string]any{
-			"type":            "response.output_item.done",
-			"sequence_number": state.Seq,
-			"output_index":    state.MessageItemIndex,
-			"item": map[string]any{
-				"type":   "message",
-				"id":     fmt.Sprintf("msg_%d", time.Now().UnixNano()),
-				"role":   "assistant",
-				"status": "completed",
-				"content": []map[string]any{
-					{"type": "output_text", "text": state.AccumulatedText},
-				},
-			},
-		}))
-		state.MessageStarted = false
-	}
-
-	// 发出 response.completed
-	status := state.FinishStatus
-	if status == "" {
-		status = "completed"
-	}
-	state.Seq++
-	completed := buildCodexCompletedEvent(state, status)
-	events = append(events, mustMarshal(completed))
-	state.Finished = false
-
-	return events, nil
+	return events
 }
 
 // findFunctionCallByIndex 查找匹配的 function call
@@ -595,9 +553,9 @@ func buildCodexReasoningOutputItemAdded(state *StreamState) []byte {
 		"sequence_number": state.Seq,
 		"output_index":    state.ReasoningItemIndex,
 		"item": map[string]any{
-			"type":   "reasoning",
-			"id":     fmt.Sprintf("rs_%d", time.Now().UnixNano()),
-			"status": "in_progress",
+			"type":    "reasoning",
+			"id":      fmt.Sprintf("rs_%d", time.Now().UnixNano()),
+			"status":  "in_progress",
 			"summary": []any{},
 		},
 	})

@@ -552,9 +552,9 @@ data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"
 func TestAnthropic_Stream_ContentBlockDelta_Thinking(t *testing.T) {
 	tr := New()
 	state := &StreamState{
-		ResponseID: "resp_1",
-		Model:      "client-model",
-		Started:    true,
+		ResponseID:         "resp_1",
+		Model:              "client-model",
+		Started:            true,
 		ReasoningItemIndex: 0,
 	}
 	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
@@ -1260,11 +1260,11 @@ func TestAnthropic_Response_ThinkingBlock(t *testing.T) {
 func TestAnthropic_Stream_MessageStop(t *testing.T) {
 	tr := New()
 	state := &StreamState{
-		ResponseID:    "resp_1",
-		Model:         "client-model",
-		Started:       true,
-		MessageStarted: true,
-		AccumulatedText: "hi",
+		ResponseID:       "resp_1",
+		Model:            "client-model",
+		Started:          true,
+		MessageStarted:   true,
+		AccumulatedText:  "hi",
 		MessageItemIndex: 0,
 	}
 	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
@@ -1402,10 +1402,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 func TestAnthropic_Stream_ContentBlockDelta_EmptyThinking(t *testing.T) {
 	tr := New()
 	state := &StreamState{
-		ResponseID:       "resp_1",
-		Model:            "client-model",
-		Started:          true,
-		ReasoningStarted: true,
+		ResponseID:         "resp_1",
+		Model:              "client-model",
+		Started:            true,
+		ReasoningStarted:   true,
 		ReasoningItemIndex: 0,
 	}
 	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
@@ -1576,11 +1576,11 @@ data: not valid json
 func TestAnthropic_Stream_MultipleFramesInChunk(t *testing.T) {
 	tr := New()
 	state := &StreamState{
-		ResponseID:       "resp_1",
-		Model:            "client-model",
-		Started:          true,
+		ResponseID:         "resp_1",
+		Model:              "client-model",
+		Started:            true,
 		ReasoningItemIndex: 0,
-		ReasoningStarted: true,
+		ReasoningStarted:   true,
 	}
 	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
 	ctx = context.WithValue(ctx, tctx.ClientModelKey, "client-model")

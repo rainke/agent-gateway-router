@@ -11,12 +11,14 @@ import (
 // 转换为 Anthropic Messages API 请求。
 //
 // Codex 请求示例:
-//   { "model": "gpt-4", "input": "...", "instructions": "...",
-//     "tools": [...], "reasoning": {"effort":"high"} }
+//
+//	{ "model": "gpt-4", "input": "...", "instructions": "...",
+//	  "tools": [...], "reasoning": {"effort":"high"} }
 //
 // Anthropic Messages 请求:
-//   { "model": "claude-...", "system": "...", "messages": [...],
-//     "tools": [...], "thinking": {...} }
+//
+//	{ "model": "claude-...", "system": "...", "messages": [...],
+//	  "tools": [...], "thinking": {...} }
 func transformCodexToMessagesRequest(_ context.Context, body []byte, upstreamModel string) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {

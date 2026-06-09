@@ -15,14 +15,14 @@ const openaiStreamStateKey tctx.ContextKey = "anthropic_codex_stream_state"
 
 // StreamState 跟踪 Anthropic -> Codex 流式响应的累积状态。
 type StreamState struct {
-	ResponseID string
-	Model      string
-	Started    bool // 是否已发送 response.created / in_progress
-	Seq        int  // 序列号
-	OutputIndex int // 当前 output item 索引
+	ResponseID  string
+	Model       string
+	Started     bool // 是否已发送 response.created / in_progress
+	Seq         int  // 序列号
+	OutputIndex int  // 当前 output item 索引
 
 	// 文本消息
-	MessageItemIndex int  // 文本 message 在 output 中的索引
+	MessageItemIndex int // 文本 message 在 output 中的索引
 	MessageStarted   bool
 	AccumulatedText  string
 
@@ -38,7 +38,6 @@ type StreamState struct {
 	// Usage
 	InputTokens  int
 	OutputTokens int
-	HasUsage     bool
 
 	// 流结束状态
 	Finished     bool

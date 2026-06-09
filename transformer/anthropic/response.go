@@ -10,25 +10,27 @@ import (
 // 转换为 Codex (OpenAI Responses API) 响应格式。
 //
 // Anthropic Messages 响应:
-//   { "id": "msg_1", "role": "assistant", "content": [
-//       {"type": "text", "text": "..."},
-//       {"type": "tool_use", "id": "toolu_1", "name": "...", "input": {...}}
-//     ],
-//     "stop_reason": "end_turn" | "tool_use" | "max_tokens" | ...,
-//     "usage": {"input_tokens": N, "output_tokens": M}
-//   }
+//
+//	{ "id": "msg_1", "role": "assistant", "content": [
+//	    {"type": "text", "text": "..."},
+//	    {"type": "tool_use", "id": "toolu_1", "name": "...", "input": {...}}
+//	  ],
+//	  "stop_reason": "end_turn" | "tool_use" | "max_tokens" | ...,
+//	  "usage": {"input_tokens": N, "output_tokens": M}
+//	}
 //
 // Codex 响应:
-//   { "id": "resp_1", "object": "response", "model": "client-model",
-//     "output": [
-//       {"type": "message", "role": "assistant", "content": [
-//         {"type": "output_text", "text": "..."}
-//       ]},
-//       {"type": "function_call", "id": "...", "call_id": "...", "name": "...", "arguments": "..."}
-//     ],
-//     "status": "completed" | "incomplete" | "failed",
-//     "usage": {"input_tokens": N, "output_tokens": M, "total_tokens": ...}
-//   }
+//
+//	{ "id": "resp_1", "object": "response", "model": "client-model",
+//	  "output": [
+//	    {"type": "message", "role": "assistant", "content": [
+//	      {"type": "output_text", "text": "..."}
+//	    ]},
+//	    {"type": "function_call", "id": "...", "call_id": "...", "name": "...", "arguments": "..."}
+//	  ],
+//	  "status": "completed" | "incomplete" | "failed",
+//	  "usage": {"input_tokens": N, "output_tokens": M, "total_tokens": ...}
+//	}
 func transformMessagesToCodexResponse(body []byte, clientModel string) ([]byte, error) {
 	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
