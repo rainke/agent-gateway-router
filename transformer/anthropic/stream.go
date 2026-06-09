@@ -21,20 +21,42 @@ import (
 //   - 单个事件返回  JSON 对象
 //   - 多个事件返回  JSON 数组（由 proxy 层拆分）
 func (t *Transformer) streamChunk(ctx context.Context, chunk []byte) ([]byte, error) {
-	// 快速判断：SSE 帧必须以 "event:" 或 "data:" 开头
+	events, err := t.convertSSEChunk(ctx, chunk)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, nil
+	}
+	if len(events) == 1 {
+		return events[0], nil
+	}
+	// 多事件：序列化为 JSON 数组
+	var rawArr []json.RawMessage
+	for _, e := range events {
+		rawArr = append(rawArr, e)
+	}
+	return json.Marshal(rawArr)
+}
+
+// convertSSEChunk 转换 Anthropic SSE chunk 为多个 Codex 事件（实现 CodexStreamTransformer 接口）。
+//
+// 接受两种输入格式：
+//   - 完整 SSE 帧（event: + data: 行，以 \n\n 分隔）
+//   - 纯 JSON payload（proxy 层在 data: 行后剥去前缀的 JSON 字符串）
+//
+// 输出：0..N 个 Codex Responses API 事件。
+func (t *Transformer) convertSSEChunk(ctx context.Context, chunk []byte) ([][]byte, error) {
 	trimmed := bytes.TrimSpace(chunk)
 	if len(trimmed) == 0 {
 		return nil, nil
 	}
-	if !bytes.HasPrefix(trimmed, []byte("event:")) && !bytes.HasPrefix(trimmed, []byte("data:")) {
-		// 非 SSE 数据，原样透传
-		return chunk, nil
-	}
 
-	// 解析 SSE 帧：可能一帧或多帧（以 \n\n 分隔）
-	frames := splitSSEFrames(trimmed)
-	if len(frames) == 0 {
-		return nil, nil
+	// 0) 非 SSE/JSON 数据：原样透传（不依赖 state 存在）
+	if !bytes.HasPrefix(trimmed, []byte("event:")) &&
+		!bytes.HasPrefix(trimmed, []byte("data:")) &&
+		trimmed[0] != '{' {
+		return [][]byte{chunk}, nil
 	}
 
 	state, _ := ctx.Value(openaiStreamStateKey).(*StreamState)
@@ -48,38 +70,44 @@ func (t *Transformer) streamChunk(ctx context.Context, chunk []byte) ([]byte, er
 		clientModel = state.Model
 	}
 
+	// 1) 纯 JSON payload：proxy 在每行 data: 后传入的就是这种格式
+	if trimmed[0] == '{' {
+		ensureStreamStateMeta(state, clientModel)
+		return handleAnthropicSSE(state, inferAnthropicEventType(trimmed), trimmed)
+	}
+
+	// 2) 完整 SSE 帧（含 event: + data: 行）
+	frames := splitSSEFrames(trimmed)
+	if len(frames) == 0 {
+		return nil, nil
+	}
 	var allEvents [][]byte
 	for _, frame := range frames {
 		eventType, data := parseSSEFrame(frame)
 		if data == nil {
 			continue
 		}
-
-		// 首次见到 data 时确保 stream state 已初始化
 		ensureStreamStateMeta(state, clientModel)
-
 		events, err := handleAnthropicSSE(state, eventType, data)
 		if err != nil {
 			return nil, err
 		}
 		allEvents = append(allEvents, events...)
 	}
+	return allEvents, nil
+}
 
-	if len(allEvents) == 0 {
-		return nil, nil
+// inferAnthropicEventType 从纯 JSON payload 推断 Anthropic 事件类型。
+// 当 proxy 逐行 data: 调用时，event 字段已被剥离，
+// 只能从 JSON 的 "type" 字段推断。Anthropic 与 OpenAI/Codex 都使用 "type" 字段，
+// 直接读取即可。
+func inferAnthropicEventType(payload []byte) string {
+	var p map[string]any
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return ""
 	}
-
-	// 编码：单事件返回对象，多事件返回数组
-	if len(allEvents) == 1 {
-		return allEvents[0], nil
-	}
-
-	// 多事件：序列化为 JSON 数组
-	var rawArr []json.RawMessage
-	for _, e := range allEvents {
-		rawArr = append(rawArr, e)
-	}
-	return json.Marshal(rawArr)
+	t, _ := p["type"].(string)
+	return t
 }
 
 // splitSSEFrames 将完整的 SSE 数据按 \n\n 切分为多个 frame
@@ -168,7 +196,9 @@ func handleAnthropicSSE(state *StreamState, eventType string, data []byte) ([][]
 // ====================
 
 // handleMessageStart 处理 message_start 事件
-// 发出 response.created 与 response.in_progress
+//
+// 注意：response.created 与 response.in_progress 由 proxy 层在调用本转换器之前
+// 提前发送，本函数只提取上游提供的初始 usage，不再发出重复事件。
 func handleMessageStart(state *StreamState, payload map[string]any) ([][]byte, error) {
 	if state.Started {
 		return nil, nil
@@ -188,9 +218,7 @@ func handleMessageStart(state *StreamState, payload map[string]any) ([][]byte, e
 		}
 	}
 
-	created := buildCodexCreatedEvent(state)
-	inProgress := buildCodexInProgressEvent(state)
-	return [][]byte{created, inProgress}, nil
+	return nil, nil
 }
 
 // handleContentBlockStart 处理 content_block_start 事件
@@ -420,8 +448,14 @@ func handleMessageStop(state *StreamState, _ map[string]any) ([][]byte, error) {
 	return emitCodexCompleted(state), nil
 }
 
-// emitCodexCompleted 关闭文本 message 并发出 response.completed
+// emitCodexCompleted 关闭文本 message 并发出 response.completed。
+// 幂等：如果已发送过则跳过。
 func emitCodexCompleted(state *StreamState) [][]byte {
+	if state.CompletedEmitted {
+		return nil
+	}
+	state.CompletedEmitted = true
+
 	var events [][]byte
 
 	// 关闭文本 message

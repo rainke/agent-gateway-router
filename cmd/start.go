@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"agr/config"
@@ -173,13 +174,34 @@ func setupLogger(level string) {
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		// 打开文件失败，仅输出到 stdout
-		handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
-		slog.SetDefault(slog.New(handler))
+		slog.SetDefault(slog.New(newUnescapeHandler(os.Stdout, logLevel)))
 		return
 	}
 
 	// 同时写入 stdout 和日志文件
 	w := io.MultiWriter(os.Stdout, f)
-	handler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: logLevel})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(newUnescapeHandler(w, logLevel)))
+}
+
+// newUnescapeHandler 构造一个 slog TextHandler，
+// 对 string 类型的 attr 做 Go 字符串反转义，
+// 避免日志中出现 \"...\"/\\ 等被多余转义的内容（例如直接传入的 JSON 字符串）。
+func newUnescapeHandler(w io.Writer, level slog.Level) *slog.TextHandler {
+	opts := &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Value.Kind() != slog.KindString {
+				return a
+			}
+			s := a.Value.String()
+			if s == "" || (s[0] != '"' && s[len(s)-1] != '"') {
+				return a
+			}
+			if unq, err := strconv.Unquote(s); err == nil {
+				return slog.String(a.Key, unq)
+			}
+			return a
+		},
+	}
+	return slog.NewTextHandler(w, opts)
 }

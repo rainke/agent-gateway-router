@@ -31,8 +31,11 @@ func transformCodexToMessagesRequest(_ context.Context, body []byte, upstreamMod
 	}
 
 	// 1) 转换 input + instructions -> messages / system
+	// Anthropic 的 system 字段对应 Codex 的 instructions 字段和
+	// input 数组中所有 role=developer 消息（合并为单个 system 字符串）。
+	var systemParts []string
 	if instructions, ok := req["instructions"].(string); ok && instructions != "" {
-		out["system"] = instructions
+		systemParts = append(systemParts, instructions)
 	}
 
 	var messages []any
@@ -44,13 +47,16 @@ func transformCodexToMessagesRequest(_ context.Context, body []byte, upstreamMod
 				"content": v,
 			})
 		case []any:
-			messages = convertCodexInputToMessages(v)
+			systemParts, messages = convertCodexInputToMessages(v, systemParts)
 		default:
 			messages = append(messages, map[string]any{
 				"role":    "user",
 				"content": fmt.Sprintf("%v", v),
 			})
 		}
+	}
+	if len(systemParts) > 0 {
+		out["system"] = strings.Join(systemParts, "\n\n")
 	}
 	out["messages"] = messages
 
@@ -133,9 +139,13 @@ func thinkingBudgetForEffort(effort string) int {
 // convertCodexInputToMessages 将 Codex Responses API 的 input 数组转换为
 // Anthropic Messages API 的 messages 数组。
 //
-// 关键规则：连续的 function_call items 必须合并到同一个 assistant message 的
-// tool_use 数组中，function_call_output 必须紧跟 tool_result 消息。
-func convertCodexInputToMessages(input []any) []any {
+// 关键规则：
+//   - 连续的 function_call items 必须合并到同一个 assistant message 的
+//     tool_use 数组中，function_call_output 必须紧跟 tool_result 消息。
+//   - role=developer 消息会被合并到 systemParts，不会出现在 messages 中。
+//
+// 返回值：更新后的 systemParts（追加了 developer 内容）和 messages 数组。
+func convertCodexInputToMessages(input []any, systemParts []string) ([]string, []any) {
 	var messages []any
 	var pendingToolUses []map[string]any
 
@@ -171,7 +181,11 @@ func convertCodexInputToMessages(input []any) []any {
 				role = "user"
 			}
 			if role == "developer" {
-				role = "system" // Codex developer 角色处理：已并入 instructions，这里忽略
+				// Codex developer 消息并入 Anthropic system 字段
+				text := extractCodexMessageText(m)
+				if text != "" {
+					systemParts = append(systemParts, text)
+				}
 				continue
 			}
 			text := extractCodexMessageText(m)
@@ -228,7 +242,7 @@ func convertCodexInputToMessages(input []any) []any {
 	}
 
 	flushToolUses()
-	return messages
+	return systemParts, messages
 }
 
 // extractCodexMessageText 从 Codex message item 中提取文本

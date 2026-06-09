@@ -40,6 +40,14 @@ type Chain struct {
 	transformers []Transformer
 }
 
+// Transformers 返回链中所有 Transformer 的副本（按正序），
+// 主要用于 proxy 等上层判断链中是否包含特定类型的 transformer。
+func (c *Chain) Transformers() []Transformer {
+	out := make([]Transformer, len(c.transformers))
+	copy(out, c.transformers)
+	return out
+}
+
 // NewChain 根据 Transformer 名称列表创建链
 func NewChain(names []string) (*Chain, error) {
 	var ts []Transformer

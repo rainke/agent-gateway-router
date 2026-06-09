@@ -15,9 +15,24 @@ import (
 	"agr/models"
 	"agr/router"
 	"agr/transformer"
+	"agr/transformer/anthropic"
 	"agr/transformer/openai"
 	"agr/transformer/tctx"
 )
+
+// chainHasAnthropic 判断 transformer 链中是否包含 anthropic transformer。
+// 用于在 /v1/responses 流式场景中判断是否需要额外设置 anthropic 流式状态。
+func chainHasAnthropic(chain *transformer.Chain) bool {
+	if chain == nil {
+		return false
+	}
+	for _, t := range chain.Transformers() {
+		if _, ok := t.(*anthropic.Transformer); ok {
+			return true
+		}
+	}
+	return false
+}
 
 // Proxy 代理处理器
 type Proxy struct {
@@ -467,11 +482,22 @@ func (p *Proxy) handleCodexStreamResponse(ctx context.Context, w http.ResponseWr
 	}
 
 	// 创建 Codex 流式状态
+	responseID := fmt.Sprintf("resp_%d", time.Now().UnixNano())
 	state := &openai.CodexStreamState{
-		ResponseID: fmt.Sprintf("resp_%d", time.Now().UnixNano()),
+		ResponseID: responseID,
 		Model:      clientModel,
 	}
 	ctx = context.WithValue(ctx, openai.CodexStreamStateKey, state)
+
+	// 如果 chain 中包含 anthropic transformer，也创建其专属状态
+	// （anthropic 转换器需要自己的 StreamState 以追踪 thinking/tool_calls 等）
+	if chainHasAnthropic(chain) {
+		anthState := &anthropic.StreamState{
+			ResponseID: responseID,
+			Model:      clientModel,
+		}
+		ctx = context.WithValue(ctx, anthropic.StreamStateContextKey, anthState)
+	}
 
 	// 发送 response.created 事件
 	createdEvent := openai.BuildCodexCreatedEvent(state)

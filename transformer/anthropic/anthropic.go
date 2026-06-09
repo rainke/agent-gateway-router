@@ -10,8 +10,12 @@ import (
 	"agr/transformer/tctx"
 )
 
-// StreamStateContextKey 是存放在 context 中的 Codex 流式状态 key
-const openaiStreamStateKey tctx.ContextKey = "anthropic_codex_stream_state"
+// StreamStateContextKey 是存放在 context 中的 Codex 流式状态 key，
+// proxy 层在流式开始时会写入状态，stream.go 从中读取。
+const StreamStateContextKey tctx.ContextKey = "anthropic_codex_stream_state"
+
+// openaiStreamStateKey 是 StreamStateContextKey 的内部别名，保持向后兼容。
+const openaiStreamStateKey = StreamStateContextKey
 
 // StreamState 跟踪 Anthropic -> Codex 流式响应的累积状态。
 type StreamState struct {
@@ -42,6 +46,9 @@ type StreamState struct {
 	// 流结束状态
 	Finished     bool
 	FinishStatus string
+	// CompletedEmitted 标记 response.completed 是否已经发送，
+	// 防止 message_delta 触发后 message_stop 重复发送。
+	CompletedEmitted bool
 }
 
 // FunctionCall 跟踪单个 function call 的流式累积状态
@@ -79,4 +86,14 @@ func (t *Transformer) TransformResponse(ctx context.Context, body []byte) ([]byt
 // 返回特殊格式：单 JSON 对象或多 JSON 数组，proxy 层会拆分为独立 SSE 事件。
 func (t *Transformer) TransformStream(ctx context.Context, chunk []byte) ([]byte, error) {
 	return t.streamChunk(ctx, chunk)
+}
+
+// TransformCodexStream 实现 transformer.CodexStreamTransformer 接口，
+// 将 Anthropic SSE chunk 转换为多个 Codex Responses API 事件。
+//
+// 返回的事件顺序与 Anthropic 流式事件顺序对应。
+// proxy 层负责将 response.created / response.in_progress 等开场事件
+// 在调用本方法之前发送出去，本方法专注于 chunk-by-chunk 的转换。
+func (t *Transformer) TransformCodexStream(ctx context.Context, chunk []byte) ([][]byte, error) {
+	return t.convertSSEChunk(ctx, chunk)
 }

@@ -460,14 +460,20 @@ data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","conten
 		t.Fatalf("转换失败: %v", err)
 	}
 
-	// 应返回至少一个 Codex 事件
+	// response.created / response.in_progress 由 proxy 层在调用本转换器之前发送，
+	// 本转换器只处理 chunk，不再发出开场事件，所以这里应没有事件。
 	events := splitCodexEvents(t, result)
-	if len(events) == 0 {
-		t.Fatalf("期望至少 1 个事件，实际 0")
+	if len(events) != 0 {
+		t.Errorf("message_start 不应产生事件，实际: %s", string(result))
 	}
-	// 第一事件应该是 response.created
-	if eventType(events[0]) != "response.created" {
-		t.Errorf("首事件应为 response.created，实际 %s", eventType(events[0]))
+
+	// 但状态应被更新：input_tokens 从 usage 中提取
+	state, _ := ctx.Value(openaiStreamStateKey).(*StreamState)
+	if state.InputTokens != 10 {
+		t.Errorf("期望 InputTokens=10，实际 %d", state.InputTokens)
+	}
+	if !state.Started {
+		t.Errorf("Started 应为 true")
 	}
 }
 
@@ -1891,6 +1897,42 @@ data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text
 	}
 	if !foundTextDelta {
 		t.Errorf("应输出 response.output_text.delta，实际: %s", string(events[0]))
+	}
+}
+
+// TestAnthropic_TransformCodexStream_PureJSONInput 验证 proxy 传入
+// 纯 JSON（data: 行剥去前缀后）也能正确转换。这是生产环境 proxy 的实际调用方式。
+func TestAnthropic_TransformCodexStream_PureJSONInput(t *testing.T) {
+	tr := New()
+	state := &StreamState{
+		ResponseID: "resp_test",
+		Model:      "client-model",
+		Started:    true,
+	}
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
+	ctx = context.WithValue(ctx, tctx.ClientModelKey, "client-model")
+	ctx = context.WithValue(ctx, openaiStreamStateKey, state)
+
+	// 纯 JSON payload（proxy 实际传入的格式）
+	chunk := []byte(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}}`)
+
+	events, err := tr.TransformCodexStream(ctx, chunk)
+	if err != nil {
+		t.Fatalf("TransformCodexStream 应成功: %v", err)
+	}
+
+	if len(events) == 0 {
+		t.Fatalf("期望至少 1 个 Codex 事件，实际 0")
+	}
+
+	var foundTextDelta bool
+	for _, e := range events {
+		if eventType(e) == "response.output_text.delta" {
+			foundTextDelta = true
+		}
+	}
+	if !foundTextDelta {
+		t.Errorf("应输出 response.output_text.delta，实际事件: %s", string(events[0]))
 	}
 }
 
