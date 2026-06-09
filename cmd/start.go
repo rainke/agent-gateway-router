@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -8,7 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"agr/config"
 	"agr/process"
@@ -183,25 +187,145 @@ func setupLogger(level string) {
 	slog.SetDefault(slog.New(newUnescapeHandler(w, logLevel)))
 }
 
-// newUnescapeHandler 构造一个 slog TextHandler，
-// 对 string 类型的 attr 做 Go 字符串反转义，
-// 避免日志中出现 \"...\"/\\ 等被多余转义的内容（例如直接传入的 JSON 字符串）。
-func newUnescapeHandler(w io.Writer, level slog.Level) *slog.TextHandler {
-	opts := &slog.HandlerOptions{
-		Level: level,
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			if a.Value.Kind() != slog.KindString {
-				return a
-			}
-			s := a.Value.String()
-			if s == "" || (s[0] != '"' && s[len(s)-1] != '"') {
-				return a
-			}
-			if unq, err := strconv.Unquote(s); err == nil {
-				return slog.String(a.Key, unq)
-			}
-			return a
-		},
+// newUnescapeHandler 构造一个 slog.Handler，
+// 行为接近 slog.TextHandler，但对 string 类型的值不再调用 strconv.AppendQuote，
+// 因此传入的 JSON 字符串里如果包含双引号/反斜杠等字符不会被再次转义。
+func newUnescapeHandler(w io.Writer, level slog.Level) slog.Handler {
+	return &unescapeTextHandler{w: w, level: level}
+}
+
+// unescapeTextHandler 仿照 slog.TextHandler 的输出格式，
+// 但在写 string 值时直接输出原始内容（只在包含换行等控制字符时才加引号并转义）。
+type unescapeTextHandler struct {
+	w     io.Writer
+	level slog.Level
+	attrs []slog.Attr
+	group string
+}
+
+func (h *unescapeTextHandler) Enabled(_ context.Context, l slog.Level) bool {
+	return l >= h.level
+}
+
+func (h *unescapeTextHandler) Handle(_ context.Context, r slog.Record) error {
+	var b strings.Builder
+	// time
+	if !r.Time.IsZero() {
+		b.WriteString("time=")
+		b.WriteString(r.Time.Format("2006-01-02T15:04:05.000-07:00"))
+		b.WriteByte(' ')
 	}
-	return slog.NewTextHandler(w, opts)
+	// level
+	b.WriteString("level=")
+	b.WriteString(strings.ToUpper(r.Level.String()))
+	b.WriteByte(' ')
+	// msg
+	b.WriteString("msg=")
+	unescapeWriteValue(&b, slog.StringValue(r.Message), false)
+	// attrs (pre + record)
+	for _, a := range h.attrs {
+		unescapeAppendAttr(&b, h.group, a)
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		unescapeAppendAttr(&b, h.group, a)
+		return true
+	})
+	b.WriteByte('\n')
+	_, err := io.WriteString(h.w, b.String())
+	return err
+}
+
+func (h *unescapeTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	merged = append(merged, h.attrs...)
+	merged = append(merged, attrs...)
+	return &unescapeTextHandler{w: h.w, level: h.level, attrs: merged, group: h.group}
+}
+
+func (h *unescapeTextHandler) WithGroup(name string) slog.Handler {
+	g := name
+	if h.group != "" {
+		g = h.group + "." + name
+	}
+	return &unescapeTextHandler{w: h.w, level: h.level, attrs: h.attrs, group: g}
+}
+
+func unescapeAppendAttr(b *strings.Builder, prefix string, a slog.Attr) {
+	if a.Equal(slog.Attr{}) {
+		return
+	}
+	key := a.Key
+	if prefix != "" {
+		key = prefix + "." + key
+	}
+	// slog.Any 自带的 "slog" group / source 等走默认值
+	if a.Value.Kind() == slog.KindGroup {
+		g := a.Value.Group()
+		newPrefix := key
+		for _, ga := range g {
+			unescapeAppendAttr(b, newPrefix, ga)
+		}
+		return
+	}
+	b.WriteString(" ")
+	b.WriteString(key)
+	b.WriteString("=")
+	unescapeWriteValue(b, a.Value, true)
+}
+
+// unescapeWriteValue 写出 attr value。
+// 关键点：string 值不再强制用 strconv.Quote 包裹，直接写出。
+// 只在包含换行/控制字符时使用 strconv.Quote 兜底。
+func unescapeWriteValue(b *strings.Builder, v slog.Value, allowUnquoted bool) {
+	switch v.Kind() {
+	case slog.KindString:
+		s := v.String()
+		if allowUnquoted && !needsTextQuote(s) {
+			b.WriteString(s)
+		} else {
+			b.WriteString(strconv.Quote(s))
+		}
+	case slog.KindInt64:
+		b.WriteString(strconv.FormatInt(v.Int64(), 10))
+	case slog.KindUint64:
+		b.WriteString(strconv.FormatUint(v.Uint64(), 10))
+	case slog.KindFloat64:
+		b.WriteString(strconv.FormatFloat(v.Float64(), 'g', -1, 64))
+	case slog.KindBool:
+		b.WriteString(strconv.FormatBool(v.Bool()))
+	case slog.KindDuration:
+		b.WriteString(v.Duration().String())
+	case slog.KindTime:
+		b.WriteString(v.Time().Format("2006-01-02T15:04:05.000-07:00"))
+	case slog.KindAny, slog.KindLogValuer:
+		fallthrough
+	default:
+		// 任意类型用 fmt.Sprint 渲染
+		fmt.Fprintf(b, "%+v", v.Any())
+	}
+}
+
+// needsTextQuote 判定 string 是否需要加引号。
+// 比 slog.TextHandler 宽松：双引号、反斜杠不再触发 quote，
+// 只在包含空格、`=`、换行等控制字符时才走 quote 路径。
+func needsTextQuote(s string) bool {
+	if s == "" {
+		return true
+	}
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b < utf8.RuneSelf {
+			if b == ' ' || b == '=' || b == '\n' || b == '\r' || b == '\t' {
+				return true
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			return true
+		}
+		i += size
+	}
+	return false
 }
