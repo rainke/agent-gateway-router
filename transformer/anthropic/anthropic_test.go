@@ -3,11 +3,18 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	"agr/transformer/tctx"
 )
+
+// codexStreamTransformerIface 是 transformer.CodexStreamTransformer 接口的本地副本，
+// 仅用于反射检查 anthropic.Transformer 是否实现了该接口（避免测试时 import cycle）。
+type codexStreamTransformerIface interface {
+	TransformCodexStream(ctx context.Context, chunk []byte) ([][]byte, error)
+}
 
 // ====================
 // Registry / Wiring
@@ -1708,6 +1715,182 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta"
 
 	if len(result) != 0 {
 		t.Errorf("无 function call 时应跳过")
+	}
+}
+
+// ====================
+// Bug-fix Regression Tests
+// ====================
+
+// TestAnthropic_CodexStreamTransformer_Interface 验证 anthropic.Transformer
+// 实现了 transformer.CodexStreamTransformer 接口，
+// 这样 chain.TransformCodexStream 才能调用到它而不是回退到 raw passthrough。
+func TestAnthropic_CodexStreamTransformer_Interface(t *testing.T) {
+	tr := New()
+
+	// 通过反射检查是否实现了目标方法
+	iface := reflect.TypeOf((*codexStreamTransformerIface)(nil)).Elem()
+	if !reflect.TypeOf(tr).Implements(iface) {
+		t.Fatalf("anthropic.Transformer 必须实现 CodexStreamTransformer 接口")
+	}
+}
+
+// TestAnthropic_CodexRequest_DeveloperRoleMapsToSystem 验证 Codex 的
+// role=developer 消息应被合并到 Anthropic 的 system 字段，而不是被丢弃。
+func TestAnthropic_CodexRequest_DeveloperRoleMapsToSystem(t *testing.T) {
+	tr := New()
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
+	ctx = context.WithValue(ctx, tctx.UpstreamModelKey, "claude-sonnet-4-5")
+
+	body := []byte(`{
+		"model": "client-model",
+		"input": [
+			{"type": "message", "role": "developer", "content": [
+				{"type": "input_text", "text": "you are a helpful assistant"}
+			]},
+			{"type": "message", "role": "user", "content": [
+				{"type": "input_text", "text": "hi"}
+			]}
+		]
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("转换失败: %v", err)
+	}
+
+	var out map[string]any
+	_ = json.Unmarshal(result, &out)
+
+	// system 字段应包含 developer 内容
+	system, _ := out["system"].(string)
+	if !strings.Contains(system, "you are a helpful assistant") {
+		t.Errorf("system 字段应包含 developer 内容，实际: %q", system)
+	}
+
+	// messages 应只剩 user 消息
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("期望 1 条 user 消息，实际 %d 条", len(msgs))
+	}
+	if msgs[0].(map[string]any)["role"] != "user" {
+		t.Errorf("期望 user 消息，实际: %v", msgs[0])
+	}
+}
+
+// TestAnthropic_CodexRequest_DeveloperAndInstructionsBothGoToSystem 验证
+// instructions 与 developer 消息都被合并到 system 字段。
+func TestAnthropic_CodexRequest_DeveloperAndInstructionsBothGoToSystem(t *testing.T) {
+	tr := New()
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
+	ctx = context.WithValue(ctx, tctx.UpstreamModelKey, "claude-sonnet-4-5")
+
+	body := []byte(`{
+		"model": "client-model",
+		"instructions": "be concise",
+		"input": [
+			{"type": "message", "role": "developer", "content": [
+				{"type": "input_text", "text": "always be polite"}
+			]},
+			{"type": "message", "role": "user", "content": [
+				{"type": "input_text", "text": "hi"}
+			]}
+		]
+	}`)
+
+	result, _ := tr.TransformRequest(ctx, body)
+	var out map[string]any
+	_ = json.Unmarshal(result, &out)
+
+	system, _ := out["system"].(string)
+	if !strings.Contains(system, "be concise") {
+		t.Errorf("system 应包含 instructions，实际: %q", system)
+	}
+	if !strings.Contains(system, "always be polite") {
+		t.Errorf("system 应包含 developer 内容，实际: %q", system)
+	}
+}
+
+// TestAnthropic_CodexRequest_MultipleDeveloperMessagesMerged 验证
+// 多个 developer 消息都被合并到 system。
+func TestAnthropic_CodexRequest_MultipleDeveloperMessagesMerged(t *testing.T) {
+	tr := New()
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
+	ctx = context.WithValue(ctx, tctx.UpstreamModelKey, "claude-sonnet-4-5")
+
+	body := []byte(`{
+		"model": "client-model",
+		"input": [
+			{"type": "message", "role": "developer", "content": [
+				{"type": "input_text", "text": "first developer block"}
+			]},
+			{"type": "message", "role": "user", "content": [
+				{"type": "input_text", "text": "ask 1"}
+			]},
+			{"type": "message", "role": "developer", "content": [
+				{"type": "input_text", "text": "second developer block"}
+			]},
+			{"type": "message", "role": "user", "content": [
+				{"type": "input_text", "text": "ask 2"}
+			]}
+		]
+	}`)
+
+	result, _ := tr.TransformRequest(ctx, body)
+	var out map[string]any
+	_ = json.Unmarshal(result, &out)
+
+	system, _ := out["system"].(string)
+	if !strings.Contains(system, "first developer block") {
+		t.Errorf("system 应包含 first developer block，实际: %q", system)
+	}
+	if !strings.Contains(system, "second developer block") {
+		t.Errorf("system 应包含 second developer block，实际: %q", system)
+	}
+
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Errorf("期望 2 条 user 消息，实际 %d 条", len(msgs))
+	}
+}
+
+// TestAnthropic_TransformCodexStream_ConvertsAnthropicEventToCodex 验证
+// 当调用 TransformCodexStream 时，Anthropic SSE 事件被转换为 Codex 事件。
+func TestAnthropic_TransformCodexStream_ConvertsAnthropicEventToCodex(t *testing.T) {
+	tr := New()
+	state := &StreamState{
+		ResponseID: "resp_test",
+		Model:      "client-model",
+		Started:    true,
+	}
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
+	ctx = context.WithValue(ctx, tctx.ClientModelKey, "client-model")
+	ctx = context.WithValue(ctx, openaiStreamStateKey, state)
+
+	// 单个 Anthropic text_delta 事件
+	chunk := []byte(`event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}}
+
+`)
+
+	events, err := tr.TransformCodexStream(ctx, chunk)
+	if err != nil {
+		t.Fatalf("TransformCodexStream 应成功: %v", err)
+	}
+
+	if len(events) == 0 {
+		t.Fatalf("期望至少 1 个 Codex 事件，实际 0")
+	}
+
+	// 至少有一个事件是 response.output_text.delta
+	var foundTextDelta bool
+	for _, e := range events {
+		if eventType(e) == "response.output_text.delta" {
+			foundTextDelta = true
+		}
+	}
+	if !foundTextDelta {
+		t.Errorf("应输出 response.output_text.delta，实际: %s", string(events[0]))
 	}
 }
 
