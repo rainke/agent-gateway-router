@@ -34,6 +34,102 @@ func chainHasAnthropic(chain *transformer.Chain) bool {
 	return false
 }
 
+// providerHasAnthropicTransformer 判断 provider 的 transformer 配置中
+// 是否包含 "anthropic"。用于 /v1/messages/count_tokens 决定是否代理到上游。
+func providerHasAnthropicTransformer(provider *config.Provider) bool {
+	if provider == nil {
+		return false
+	}
+	for _, name := range provider.Transformer {
+		if name == "anthropic" {
+			return true
+		}
+	}
+	return false
+}
+
+// findAnthropicProviderForModel 在所有 provider 中查找一个同时满足以下条件的 provider：
+//   - transformer 链中包含 "anthropic"
+//   - models 列表中包含指定的上游模型名
+//
+// 用于 /v1/messages/count_tokens：当主路由的 provider 不支持 anthropic transformer 时，
+// 回退查找一个提供相同上游模型的 anthropic provider 来代理 count_tokens 请求。
+// 找不到时返回 nil。
+func (p *Proxy) findAnthropicProviderForModel(upstreamModel string) *config.Provider {
+	for i := range p.cfg.Providers {
+		prov := &p.cfg.Providers[i]
+		if !providerHasAnthropicTransformer(prov) {
+			continue
+		}
+		for _, m := range prov.Models {
+			if m == upstreamModel {
+				return prov
+			}
+		}
+	}
+	return nil
+}
+
+// proxyCountTokensUpstream 将 count_tokens 请求代理到上游
+// {provider.APIBaseURL}/count_tokens 端点，并原样透传上游响应。
+func (p *Proxy) proxyCountTokensUpstream(w http.ResponseWriter, r *http.Request, body []byte, provider *config.Provider, upstreamModel string) {
+	// 构建上游 count_tokens URL：在 api_base_url 后追加 /count_tokens
+	upstreamURL := strings.TrimRight(provider.APIBaseURL, "/") + "/count_tokens"
+
+	ctx := r.Context()
+
+	// 将请求体中的 model 替换为路由后的上游模型名，使上游能识别
+	transformedBody, err := replaceModelInBody(body, upstreamModel)
+	if err != nil {
+		p.writeError(w, http.StatusInternalServerError, "替换模型名失败: "+err.Error())
+		return
+	}
+
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, strings.NewReader(string(transformedBody)))
+	if err != nil {
+		p.writeError(w, http.StatusInternalServerError, "构建上游请求失败: "+err.Error())
+		return
+	}
+
+	upstreamReq.Header.Set("Content-Type", "application/json")
+	if provider.APIKey != "" {
+		upstreamReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	}
+
+	slog.Info("代理 count_tokens 请求", "upstream_url", upstreamURL, "provider", provider.Name, "model", upstreamModel)
+
+	resp, err := p.client.Do(upstreamReq)
+	if err != nil {
+		p.writeError(w, http.StatusBadGateway, "请求上游失败: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		p.writeError(w, http.StatusBadGateway, "读取上游响应失败: "+err.Error())
+		return
+	}
+
+	// 透传上游状态码和响应体
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
+}
+
+// replaceModelInBody 将请求体 JSON 中的 model 字段替换为上游模型名。
+func replaceModelInBody(body []byte, upstreamModel string) ([]byte, error) {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("解析请求体 JSON 失败: %w", err)
+	}
+	req["model"] = upstreamModel
+	return json.Marshal(req)
+}
+
 // Proxy 代理处理器
 type Proxy struct {
 	router *router.Router
@@ -63,6 +159,13 @@ func (p *Proxy) HandleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleMessagesCountTokens 处理 /v1/messages/count_tokens 请求（Claude Code）
+//
+// 路由策略：
+//   - 优先使用主路由的 provider：如果它的 transformer 链中包含 anthropic，则代理到上游
+//     {api_base_url}/count_tokens 端点。
+//   - 否则在所有 provider 中查找一个同时满足 "使用 anthropic transformer" 且 "提供相同
+//     上游模型" 的 provider，代理到它的 {api_base_url}/count_tokens 端点。
+//   - 如果找不到任何 anthropic provider，则使用本地 tiktoken 估算 input_tokens。
 func (p *Proxy) HandleMessagesCountTokens(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -80,6 +183,23 @@ func (p *Proxy) HandleMessagesCountTokens(w http.ResponseWriter, r *http.Request
 	result, err := p.router.Route(clientModel)
 	if err != nil {
 		p.writeError(w, http.StatusBadGateway, "路由失败: "+err.Error())
+		return
+	}
+
+	// 确定用于 count_tokens 代理的 provider 和上游模型：
+	// 1. 主路由 provider 支持 anthropic → 直接使用
+	// 2. 否则回退查找提供相同上游模型的 anthropic provider
+	var countProvider *config.Provider = result.Provider
+	upstreamModel := result.Model
+	if !providerHasAnthropicTransformer(countProvider) {
+		if fallback := p.findAnthropicProviderForModel(upstreamModel); fallback != nil {
+			countProvider = fallback
+		}
+	}
+
+	// 如果选定的 provider 使用 anthropic transformer，代理到上游 count_tokens 端点
+	if providerHasAnthropicTransformer(countProvider) {
+		p.proxyCountTokensUpstream(w, r, body, countProvider, upstreamModel)
 		return
 	}
 

@@ -243,6 +243,330 @@ func TestHandleMessagesCountTokens_InvalidBody(t *testing.T) {
 	}
 }
 
+// newTestProxyWithAnthropicProvider 创建一个使用 anthropic transformer 的测试代理。
+// upstreamURL 是 provider 的 api_base_url（不含 /count_tokens 后缀）。
+func newTestProxyWithAnthropicProvider(upstreamURL string) *Proxy {
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{
+				Name:        "anthropic-provider",
+				APIBaseURL:  upstreamURL,
+				APIKey:      "sk-anthropic",
+				Models:      []string{"model-a"},
+				Transformer: []string{"anthropic"},
+			},
+		},
+		Router: map[string]string{
+			"default":  "anthropic-provider,model-a",
+			"claude-3": "anthropic-provider,model-a",
+		},
+	}
+	r := router.New(cfg)
+	return New(cfg, r)
+}
+
+// TestHandleMessagesCountTokens_AnthropicProvider_ProxiesUpstream 验证当 provider
+// 使用 anthropic transformer 时，count_tokens 请求应代理到上游的 /count_tokens 端点，
+// 而不是本地用 tiktoken 估算。
+func TestHandleMessagesCountTokens_AnthropicProvider_ProxiesUpstream(t *testing.T) {
+	var receivedPath string
+	var receivedAuth string
+	var receivedBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		receivedAuth = r.Header.Get("Authorization")
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"input_tokens":42}`))
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithAnthropicProvider(upstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，实际 %d，body: %s", w.Code, w.Body.String())
+	}
+
+	// 上游应被请求，且路径为 /count_tokens
+	if receivedPath == "" {
+		t.Fatal("anthropic provider 的 count_tokens 应代理到上游")
+	}
+	if !strings.HasSuffix(receivedPath, "/count_tokens") {
+		t.Errorf("上游路径应以 /count_tokens 结尾，实际 %s", receivedPath)
+	}
+
+	// Authorization 头应被设置
+	if receivedAuth != "Bearer sk-anthropic" {
+		t.Errorf("Authorization 头期望 Bearer sk-anthropic，实际 %s", receivedAuth)
+	}
+
+	// 上游收到的请求体应保留原始 model（anthropic transformer 对 Messages API 透传）
+	var upstreamReq map[string]any
+	if err := json.Unmarshal(receivedBody, &upstreamReq); err != nil {
+		t.Fatalf("上游请求体 JSON 解析失败: %v", err)
+	}
+	if upstreamReq["model"] != "model-a" {
+		t.Errorf("上游请求 model 应为 model-a（路由后的上游模型），实际 %v", upstreamReq["model"])
+	}
+
+	// 响应应原样透传上游返回的 input_tokens
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应 JSON 解析失败: %v", err)
+	}
+	if resp["input_tokens"].(float64) != 42 {
+		t.Errorf("input_tokens 期望 42（上游返回值），实际 %v", resp["input_tokens"])
+	}
+}
+
+// TestHandleMessagesCountTokens_AnthropicProvider_UsesAPIBaseURL 验证 count_tokens
+// 代理 URL 是在 provider 的 api_base_url 基础上追加 /count_tokens。
+// 例如 api_base_url=https://api.deepseek.com/anthropic/v1/messages
+// 则代理到 https://api.deepseek.com/anthropic/v1/messages/count_tokens
+func TestHandleMessagesCountTokens_AnthropicProvider_UsesAPIBaseURL(t *testing.T) {
+	var receivedPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"input_tokens":1}`))
+	}))
+	defer upstream.Close()
+
+	// 模拟 DeepSeek Anthropic 配置：api_base_url 以 /v1/messages 结尾
+	p := newTestProxyWithAnthropicProvider(upstream.URL + "/v1/messages")
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，实际 %d，body: %s", w.Code, w.Body.String())
+	}
+
+	// 路径应为 /v1/messages/count_tokens
+	if receivedPath != "/v1/messages/count_tokens" {
+		t.Errorf("上游路径期望 /v1/messages/count_tokens，实际 %s", receivedPath)
+	}
+}
+
+// TestHandleMessagesCountTokens_AnthropicProvider_UpstreamError 验证上游返回错误时，
+// 代理应将错误状态码透传给客户端。
+func TestHandleMessagesCountTokens_AnthropicProvider_UpstreamError(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"bad request"}}`))
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyWithAnthropicProvider(upstream.URL + "/v1/messages")
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("状态码期望 400（透传上游错误），实际 %d", w.Code)
+	}
+}
+
+// TestHandleMessagesCountTokens_NonAnthropicProvider_LocalEstimation 验证当 provider
+// 不使用 anthropic transformer 时，count_tokens 仍使用本地 tiktoken 估算，不请求上游。
+func TestHandleMessagesCountTokens_NonAnthropicProvider_LocalEstimation(t *testing.T) {
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	// 使用默认的 openai transformer（非 anthropic）
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，实际 %d，body: %s", w.Code, w.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("非 anthropic provider 的 count_tokens 不应请求上游")
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应 JSON 解析失败: %v", err)
+	}
+	if resp["input_tokens"].(float64) <= 0 {
+		t.Errorf("input_tokens 应大于 0（本地估算），实际 %v", resp["input_tokens"])
+	}
+}
+
+// newTestProxyWithOpenAIAndAnthropicProviders 模拟用户的真实配置：
+// 两个 provider 提供相同的上游模型 model-a，一个用 openai transformer（主路由），
+// 另一个用 anthropic transformer。主路由指向 openai provider。
+func newTestProxyWithOpenAIAndAnthropicProviders(openaiURL, anthropicURL string) *Proxy {
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{
+				Name:        "openai-provider",
+				APIBaseURL:  openaiURL,
+				APIKey:      "sk-openai",
+				Models:      []string{"model-a"},
+				Transformer: []string{"openai"},
+			},
+			{
+				Name:        "anthropic-provider",
+				APIBaseURL:  anthropicURL,
+				APIKey:      "sk-anthropic",
+				Models:      []string{"model-a"},
+				Transformer: []string{"anthropic"},
+			},
+		},
+		Router: map[string]string{
+			"default":  "openai-provider,model-a",
+			"claude-3": "openai-provider,model-a",
+		},
+	}
+	r := router.New(cfg)
+	return New(cfg, r)
+}
+
+// TestHandleMessagesCountTokens_FallbackToAnthropicProvider 验证当主路由的 provider
+// 不使用 anthropic transformer 时，count_tokens 应在所有 provider 中查找一个同时满足
+// "使用 anthropic transformer" 且 "提供相同上游模型" 的 provider，并代理到它的
+// /count_tokens 端点。
+//
+// 这对应用户的真实配置：deepseek (openai) 和 deepseek-anthropic (anthropic) 都提供
+// deepseek-v4-flash，主路由指向 deepseek (openai)，但 count_tokens 应代理到
+// deepseek-anthropic 的 /count_tokens 端点。
+func TestHandleMessagesCountTokens_FallbackToAnthropicProvider(t *testing.T) {
+	var openaiCalled bool
+	var anthropicPath string
+	var anthropicAuth string
+	var anthropicBody []byte
+
+	openaiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		openaiCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer openaiUpstream.Close()
+
+	anthropicUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		anthropicPath = r.URL.Path
+		anthropicAuth = r.Header.Get("Authorization")
+		anthropicBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"input_tokens":99}`))
+	}))
+	defer anthropicUpstream.Close()
+
+	// 主路由指向 openai provider，但存在一个 anthropic provider 提供相同模型
+	p := newTestProxyWithOpenAIAndAnthropicProviders(openaiUpstream.URL, anthropicUpstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，实际 %d，body: %s", w.Code, w.Body.String())
+	}
+
+	// 不应请求 openai provider
+	if openaiCalled {
+		t.Fatal("count_tokens 不应请求主路由的 openai provider")
+	}
+
+	// 应代理到 anthropic provider 的 /count_tokens 端点
+	if anthropicPath == "" {
+		t.Fatal("count_tokens 应回退查找 anthropic provider 并代理到上游")
+	}
+	if !strings.HasSuffix(anthropicPath, "/count_tokens") {
+		t.Errorf("上游路径应以 /count_tokens 结尾，实际 %s", anthropicPath)
+	}
+	if anthropicAuth != "Bearer sk-anthropic" {
+		t.Errorf("Authorization 头期望 Bearer sk-anthropic，实际 %s", anthropicAuth)
+	}
+
+	// 上游收到的 model 应为 anthropic provider 的上游模型名（model-a）
+	var upstreamReq map[string]any
+	if err := json.Unmarshal(anthropicBody, &upstreamReq); err != nil {
+		t.Fatalf("上游请求体 JSON 解析失败: %v", err)
+	}
+	if upstreamReq["model"] != "model-a" {
+		t.Errorf("上游请求 model 应为 model-a，实际 %v", upstreamReq["model"])
+	}
+
+	// 响应应原样透传上游返回的 input_tokens
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应 JSON 解析失败: %v", err)
+	}
+	if resp["input_tokens"].(float64) != 99 {
+		t.Errorf("input_tokens 期望 99（上游返回值），实际 %v", resp["input_tokens"])
+	}
+}
+
+// TestHandleMessagesCountTokens_NoAnthropicProviderForModel_LocalEstimation 验证当
+// 主路由 provider 不使用 anthropic transformer，且没有任何 anthropic provider 提供相同
+// 上游模型时，count_tokens 回退到本地 tiktoken 估算。
+func TestHandleMessagesCountTokens_NoAnthropicProviderForModel_LocalEstimation(t *testing.T) {
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	// 只有一个 openai provider，没有 anthropic provider 提供相同模型
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessagesCountTokens(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码期望 200，实际 %d，body: %s", w.Code, w.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("没有 anthropic provider 时不应请求上游，应使用本地估算")
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应 JSON 解析失败: %v", err)
+	}
+	if resp["input_tokens"].(float64) <= 0 {
+		t.Errorf("input_tokens 应大于 0（本地估算），实际 %v", resp["input_tokens"])
+	}
+}
+
 func TestHandleMessages_Stream(t *testing.T) {
 	// 模拟上游返回 SSE 流式响应
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
