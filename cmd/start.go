@@ -173,17 +173,17 @@ func setupLogger(level string) {
 	logDir := filepath.Join(home, ".agr", "logs")
 	os.MkdirAll(logDir, 0755)
 
-	// 按日期命名日志文件
-	logFile := filepath.Join(logDir, time.Now().Format("2006-01-02")+".log")
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		// 打开文件失败，仅输出到 stdout
+	// 使用按天滚动的 writer，跨过午夜时自动切换到新日期的日志文件，
+	// 无需重启进程即可实现日志按天分割。
+	fw := newDailyFileWriter(logDir, time.Now)
+	// 预先尝试打开一次，失败则仅输出到 stdout
+	if _, err := fw.Write(nil); err != nil {
 		slog.SetDefault(slog.New(newUnescapeHandler(os.Stdout, logLevel)))
 		return
 	}
 
 	// 同时写入 stdout 和日志文件
-	w := io.MultiWriter(os.Stdout, f)
+	w := io.MultiWriter(os.Stdout, fw)
 	slog.SetDefault(slog.New(newUnescapeHandler(w, logLevel)))
 }
 
