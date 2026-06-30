@@ -25,6 +25,24 @@ func TestUnescapeHandler_RendersTraceLevel(t *testing.T) {
 	}
 }
 
+func TestUnescapeHandler_RendersJSONBodyWithoutEscapingOrOuterQuotes(t *testing.T) {
+	var buf bytes.Buffer
+	h := newUnescapeHandler(&buf, slog.LevelDebug)
+	logger := slog.New(h)
+	jsonBody := `{"model":"glm-5.2","messages":[{"role":"system","content":"You are a coding agent"}]}`
+
+	logger.Log(context.Background(), loglevel.LevelTrace, "转换后的请求体", "body", jsonBody)
+
+	out := buf.String()
+	want := `body={"model":"glm-5.2","messages":[{"role":"system","content":"You are a coding agent"}]}`
+	if !strings.Contains(out, want) {
+		t.Fatalf("期望 JSON body 原样输出且没有最外层引号，实际: %s", out)
+	}
+	if strings.Contains(out, `body="{\"model\"`) {
+		t.Fatalf("JSON body 不应被 strconv.Quote 转义，实际: %s", out)
+	}
+}
+
 func TestUnescapeHandler_TraceFiltering(t *testing.T) {
 	ctx := context.Background()
 	h := newUnescapeHandler(&bytes.Buffer{}, slog.LevelInfo)
