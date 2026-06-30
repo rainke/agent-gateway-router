@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -270,7 +271,9 @@ func unescapeWriteValue(b *strings.Builder, v slog.Value, allowUnquoted bool) {
 	switch v.Kind() {
 	case slog.KindString:
 		s := v.String()
-		if allowUnquoted && !needsTextQuote(s) {
+		if allowUnquoted && isJSONObjectOrArray(s) {
+			b.WriteString(s)
+		} else if allowUnquoted && !needsTextQuote(s) {
 			b.WriteString(s)
 		} else {
 			b.WriteString(strconv.Quote(s))
@@ -292,6 +295,23 @@ func unescapeWriteValue(b *strings.Builder, v slog.Value, allowUnquoted bool) {
 	default:
 		// 任意类型用 fmt.Sprint 渲染
 		fmt.Fprintf(b, "%+v", v.Any())
+	}
+}
+
+// isJSONObjectOrArray reports whether s is a JSON object or array.
+// JSON bodies frequently contain spaces inside string fields; those spaces
+// should not force TextHandler-style quoting because that re-escapes every
+// JSON quote as \" and wraps the whole body in another pair of quotes.
+func isJSONObjectOrArray(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return false
+	}
+	switch trimmed[0] {
+	case '{', '[':
+		return json.Valid([]byte(trimmed))
+	default:
+		return false
 	}
 }
 
