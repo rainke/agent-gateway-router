@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,50 @@ pid_file = "/tmp/test.pid"
 	_, err := Load(path)
 	if err == nil {
 		t.Fatal("期望端口超出范围时返回错误")
+	}
+}
+
+func TestLoad_ValidLogLevel_Trace(t *testing.T) {
+	content := `
+[server]
+port = 8080
+log_level = "trace"
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "test-provider"
+api_base_url = "http://localhost:8000"
+api_key = "sk-test"
+models = ["model-a"]
+transformer = ["openai"]
+
+[router]
+default = "test-provider,model-a"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("trace 日志级别应该通过校验: %v", err)
+	}
+	if cfg.Server.LogLevel != "trace" {
+		t.Errorf("日志级别期望 trace，实际 %s", cfg.Server.LogLevel)
+	}
+}
+
+func TestLoad_InvalidLogLevel_ErrorMentionsTrace(t *testing.T) {
+	content := `
+[server]
+port = 8080
+log_level = "verbose"
+pid_file = "/tmp/test.pid"
+`
+	path := writeTempConfig(t, content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("期望无效日志级别时返回错误")
+	}
+	if !strings.Contains(err.Error(), "trace") {
+		t.Errorf("错误信息应包含可选级别 trace，实际: %v", err)
 	}
 }
 

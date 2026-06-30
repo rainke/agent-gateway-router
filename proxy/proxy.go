@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agr/config"
+	"agr/loglevel"
 	"agr/models"
 	"agr/router"
 	"agr/transformer"
@@ -299,7 +300,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		}
 	}()
 
-	slog.Debug("转换前的请求体", "body", string(body))
+	loglevel.Trace("转换前的请求体", "body", string(body))
 
 	// 执行请求转换
 	transformedBody, err := chain.TransformRequest(ctx, body)
@@ -308,7 +309,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		return
 	}
 
-	slog.Debug("转换后的请求体", "body", string(transformedBody))
+	loglevel.Trace("转换后的请求体", "body", string(transformedBody))
 
 	// 只在 Responses API 路径下检查 reasoning 标记
 	if strings.Contains(path, "/v1/responses") {

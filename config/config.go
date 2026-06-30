@@ -75,10 +75,10 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("配置错误: server.port 必须在 1-65535 之间，当前值: %d", cfg.Server.Port)
 	}
 
-	// 校验日志级别
-	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
+	// 校验日志级别（优先级顺序：debug > trace > info > warn > error）
+	validLevels := map[string]bool{"debug": true, "trace": true, "info": true, "warn": true, "error": true}
 	if cfg.Server.LogLevel != "" && !validLevels[cfg.Server.LogLevel] {
-		return fmt.Errorf("配置错误: server.log_level 必须是 debug/info/warn/error 之一，当前值: %s", cfg.Server.LogLevel)
+		return fmt.Errorf("配置错误: server.log_level 必须是 debug/trace/info/warn/error 之一，当前值: %s", cfg.Server.LogLevel)
 	}
 
 	// 校验 Provider 名称唯一性

@@ -155,7 +155,7 @@ agr restart   # 重启
 ```toml
 [server]
 port = 9999
-log_level = "info"              # debug | info | warn | error
+log_level = "info"              # debug | trace | info | warn | error
 pid_file = "~/.agr/agr.pid"
 models_config = "models_config.json"  # 可选，Codex 模型元数据
 
@@ -223,7 +223,7 @@ default = "zhipu,glm-5-oc"
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `port` | int | `9999` | 本地监听端口 |
-| `log_level` | string | `"info"` | 日志级别：`debug` / `info` / `warn` / `error` |
+| `log_level` | string | `"info"` | 日志级别：`debug` / `trace` / `info` / `warn` / `error`（从详细到简略） |
 | `pid_file` | string | `"~/.agr/agr.pid"` | PID 文件路径 |
 | `models_config` | string | — | 模型元数据配置文件路径（相对于 `~/.agr/`） |
 
@@ -678,7 +678,7 @@ agr start -p 8080
 
 **Q: 如何查看详细日志？**
 
-在配置文件中将 `log_level` 改为 `"debug"`，重启服务。
+在配置文件中将 `log_level` 改为 `"debug"`，重启服务。需要查看转换前后的请求体等更细粒度信息时，可进一步设为 `"trace"`（优先级：debug > trace > info > warn > error）。
 
 **Q: Claude Code 连不上网关？**
 

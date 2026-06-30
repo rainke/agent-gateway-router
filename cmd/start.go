@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"agr/config"
+	"agr/loglevel"
 	"agr/process"
 	"agr/server"
 
@@ -151,19 +152,8 @@ func runServer() error {
 
 // setupLogger 设置日志级别，同时输出到 stdout 和日志文件
 func setupLogger(level string) {
-	var logLevel slog.Level
-	switch level {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
+	// 级别优先级顺序：debug > trace > info > warn > error
+	logLevel := loglevel.ParseLevel(level)
 
 	// 创建日志目录
 	home, err := os.UserHomeDir()
@@ -217,7 +207,7 @@ func (h *unescapeTextHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 	// level
 	b.WriteString("level=")
-	b.WriteString(strings.ToUpper(r.Level.String()))
+	b.WriteString(loglevel.LevelName(r.Level))
 	b.WriteByte(' ')
 	// msg
 	b.WriteString("msg=")
