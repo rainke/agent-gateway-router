@@ -6,6 +6,7 @@ package anthropic
 
 import (
 	"context"
+	"strings"
 
 	"agr/transformer/tctx"
 )
@@ -73,11 +74,17 @@ func New() *Transformer {
 // TransformRequest 转换 Codex 请求到 Anthropic Messages API 请求格式
 func (t *Transformer) TransformRequest(ctx context.Context, body []byte) ([]byte, error) {
 	upstreamModel, _ := ctx.Value(tctx.UpstreamModelKey).(string)
+	if isMessagesRequest(ctx) {
+		return replaceMessagesRequestModel(body, upstreamModel)
+	}
 	return transformCodexToMessagesRequest(ctx, body, upstreamModel)
 }
 
 // TransformResponse 转换 Anthropic Messages API 响应到 Codex Responses API 响应
 func (t *Transformer) TransformResponse(ctx context.Context, body []byte) ([]byte, error) {
+	if isMessagesRequest(ctx) {
+		return body, nil
+	}
 	clientModel, _ := ctx.Value(tctx.ClientModelKey).(string)
 	return transformMessagesToCodexResponse(body, clientModel)
 }
@@ -85,6 +92,9 @@ func (t *Transformer) TransformResponse(ctx context.Context, body []byte) ([]byt
 // TransformStream 转换 Anthropic SSE chunk 为 Codex SSE chunk。
 // 返回特殊格式：单 JSON 对象或多 JSON 数组，proxy 层会拆分为独立 SSE 事件。
 func (t *Transformer) TransformStream(ctx context.Context, chunk []byte) ([]byte, error) {
+	if isMessagesRequest(ctx) {
+		return chunk, nil
+	}
 	return t.streamChunk(ctx, chunk)
 }
 
@@ -96,4 +106,9 @@ func (t *Transformer) TransformStream(ctx context.Context, chunk []byte) ([]byte
 // 在调用本方法之前发送出去，本方法专注于 chunk-by-chunk 的转换。
 func (t *Transformer) TransformCodexStream(ctx context.Context, chunk []byte) ([][]byte, error) {
 	return t.convertSSEChunk(ctx, chunk)
+}
+
+func isMessagesRequest(ctx context.Context) bool {
+	path, _ := ctx.Value(tctx.RequestPathKey).(string)
+	return strings.Contains(path, "/v1/messages")
 }

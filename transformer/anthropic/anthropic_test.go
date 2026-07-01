@@ -72,6 +72,61 @@ func TestAnthropic_CodexRequest_ConvertsToMessages(t *testing.T) {
 	}
 }
 
+func TestAnthropic_MessagesRequest_PassThroughWithModelReplacement(t *testing.T) {
+	tr := New()
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/messages")
+	ctx = context.WithValue(ctx, tctx.UpstreamModelKey, "MiniMax-M3")
+
+	body := []byte(`{
+		"model": "minimax-m3",
+		"max_tokens": 64000,
+		"system": [
+			{"type": "text", "text": "You are ZCode", "cache_control": {"type": "ephemeral"}}
+		],
+		"messages": [
+			{"role": "user", "content": [{"type": "text", "text": "hello"}]}
+		],
+		"stream": true,
+		"tool_choice": {"type": "auto"}
+	}`)
+
+	result, err := tr.TransformRequest(ctx, body)
+	if err != nil {
+		t.Fatalf("Messages 请求透传应成功: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("结果不是合法 JSON: %v", err)
+	}
+
+	if out["model"] != "MiniMax-M3" {
+		t.Errorf("期望 model 替换为 MiniMax-M3，实际 %v", out["model"])
+	}
+	if maxTokens, ok := out["max_tokens"].(float64); !ok || maxTokens != 64000 {
+		t.Errorf("max_tokens 应透传，实际 %v", out["max_tokens"])
+	}
+	if _, ok := out["input"]; ok {
+		t.Errorf("Messages 请求不应被当成 Codex input 转换，实际 input=%v", out["input"])
+	}
+
+	system, ok := out["system"].([]any)
+	if !ok || len(system) != 1 {
+		t.Fatalf("system 数组应透传，实际 %v", out["system"])
+	}
+	if system[0].(map[string]any)["text"] != "You are ZCode" {
+		t.Errorf("system 内容应透传，实际 %v", system[0])
+	}
+
+	msgs, ok := out["messages"].([]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("messages 数组应透传且不能为 null，实际 %v", out["messages"])
+	}
+	if msgs[0].(map[string]any)["role"] != "user" {
+		t.Errorf("message role 应透传，实际 %v", msgs[0])
+	}
+}
+
 func TestAnthropic_CodexRequest_ArrayInput(t *testing.T) {
 	tr := New()
 	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
@@ -310,6 +365,29 @@ func TestAnthropic_CodexRequest_InvalidJSON_Passthrough(t *testing.T) {
 // TransformResponse
 // ====================
 
+func TestAnthropic_MessagesResponse_PassThroughForMessagesPath(t *testing.T) {
+	tr := New()
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/messages")
+
+	body := []byte(`{
+		"id": "msg_123",
+		"type": "message",
+		"role": "assistant",
+		"model": "MiniMax-M3",
+		"content": [{"type": "text", "text": "Hello there!"}],
+		"stop_reason": "end_turn",
+		"usage": {"input_tokens": 10, "output_tokens": 5}
+	}`)
+
+	result, err := tr.TransformResponse(ctx, body)
+	if err != nil {
+		t.Fatalf("Messages 响应透传应成功: %v", err)
+	}
+	if string(result) != string(body) {
+		t.Errorf("Messages 响应应原样透传，实际 %s", string(result))
+	}
+}
+
 func TestAnthropic_MessagesResponse_ConvertsToCodex(t *testing.T) {
 	tr := New()
 	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/responses")
@@ -426,6 +504,20 @@ func TestAnthropic_MessagesResponse_InvalidJSON_Passthrough(t *testing.T) {
 // ====================
 // TransformStream (Anthropic Messages SSE -> Codex SSE)
 // ====================
+
+func TestAnthropic_Stream_PassThroughForMessagesPath(t *testing.T) {
+	tr := New()
+	ctx := context.WithValue(context.Background(), tctx.RequestPathKey, "/v1/messages")
+	chunk := []byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
+
+	result, err := tr.TransformStream(ctx, chunk)
+	if err != nil {
+		t.Fatalf("Messages 流式 chunk 透传应成功: %v", err)
+	}
+	if string(result) != string(chunk) {
+		t.Errorf("Messages 流式 chunk 应原样透传")
+	}
+}
 
 func TestAnthropic_Stream_NonSSE_Passthrough(t *testing.T) {
 	tr := New()

@@ -120,6 +120,24 @@ func transformCodexToMessagesRequest(_ context.Context, body []byte, upstreamMod
 	return result, nil
 }
 
+func replaceMessagesRequestModel(body []byte, upstreamModel string) ([]byte, error) {
+	if upstreamModel == "" {
+		return body, nil
+	}
+
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body, nil
+	}
+	req["model"] = upstreamModel
+
+	result, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("序列化 Anthropic Messages 请求失败: %w", err)
+	}
+	return result, nil
+}
+
 // thinkingBudgetForEffort 将 Codex reasoning effort 映射到 Anthropic thinking budget
 func thinkingBudgetForEffort(effort string) int {
 	switch strings.ToLower(effort) {
