@@ -22,6 +22,18 @@ func setupUsageTestDir(t *testing.T) string {
 	return dir
 }
 
+func usageJSONLPath(t *testing.T, dir string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil {
+		t.Fatalf("查找 usage JSONL 文件失败: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("期望生成 1 个 usage JSONL 文件，实际 %d 个: %v", len(matches), matches)
+	}
+	return matches[0]
+}
+
 func TestExtractUsageFromMap_OpenAI_FullFields(t *testing.T) {
 	usage := map[string]any{
 		"total_tokens":      float64(20332),
@@ -180,7 +192,7 @@ func TestRecordUsage_WritesJSONL(t *testing.T) {
 
 	recordUsage(record)
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("打开文件失败: %v", err)
@@ -225,7 +237,7 @@ func TestRecordUsage_SetsTimestamp(t *testing.T) {
 
 	recordUsage(UsageRecord{Provider: "test", Model: "m", TotalTokens: 100, InputTokens: 40, OutputTokens: 60})
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("文件未创建: %v", err)
@@ -251,7 +263,7 @@ func TestRecordUsage_AppendsMultipleRecords(t *testing.T) {
 	recordUsage(UsageRecord{Provider: "a", Model: "m1", TotalTokens: 100, InputTokens: 40, OutputTokens: 60})
 	recordUsage(UsageRecord{Provider: "b", Model: "m2", TotalTokens: 200, InputTokens: 80, OutputTokens: 120})
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("打开文件失败: %v", err)
@@ -330,7 +342,7 @@ func TestExtractUsageFromBody_OpenAI(t *testing.T) {
 	body := []byte(`{"choices":[{"message":{"content":"hi"}}],"usage":{"total_tokens":100,"prompt_tokens":40,"completion_tokens":60}}`)
 	extractUsageFromBody(body, "deepseek", "deepseek-v4-flash")
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("文件未创建: %v", err)
@@ -356,7 +368,7 @@ func TestExtractUsageFromBody_Anthropic(t *testing.T) {
 	body := []byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":100,"output_tokens":50}}`)
 	extractUsageFromBody(body, "minimax", "MiniMax-M3")
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("文件未创建: %v", err)
@@ -393,7 +405,7 @@ func TestFlushUsageRecord_WithUsage(t *testing.T) {
 	}
 	flushUsageRecord(usage, "test-provider", "test-model")
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("文件未创建: %v", err)
@@ -422,7 +434,7 @@ func TestFlushUsageRecord_Anthropic_Merged(t *testing.T) {
 	}
 	flushUsageRecord(usage, "minimax", "MiniMax-M3")
 
-	path := filepath.Join(dir, "2026-06-05.jsonl")
+	path := usageJSONLPath(t, dir)
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("文件未创建: %v", err)
