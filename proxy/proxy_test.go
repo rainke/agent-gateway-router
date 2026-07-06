@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1365,6 +1367,46 @@ func TestHandleMessages_UpstreamNonStreamError(t *testing.T) {
 	// 非流式响应会透传上游状态码
 	if w.Code != 500 {
 		t.Errorf("状态码期望 500，实际 %d", w.Code)
+	}
+}
+
+func TestHandleMessages_LogsUpstreamAbnormalResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"invalid request from provider"}}`))
+	}))
+	defer upstream.Close()
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previousLogger)
+
+	p := newTestProxy(upstream.URL)
+
+	body := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}],"max_tokens":100}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.HandleMessages(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("状态码期望 400，实际 %d", w.Code)
+	}
+
+	logOutput := logs.String()
+	for _, want := range []string{
+		"上游返回非正常状态",
+		"provider=test-provider",
+		"status=400",
+		"body=",
+		"invalid request from provider",
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("日志应包含 %q，实际日志: %s", want, logOutput)
+		}
 	}
 }
 
