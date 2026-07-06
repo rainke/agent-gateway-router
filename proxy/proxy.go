@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"agr/transformer/openai"
 	"agr/transformer/tctx"
 )
+
+const maxLoggedUpstreamBodyBytes = 4096
 
 // chainHasAnthropic 判断 transformer 链中是否包含 anthropic transformer。
 // 用于在 /v1/responses 流式场景中判断是否需要额外设置 anthropic 流式状态。
@@ -111,6 +114,7 @@ func (p *Proxy) proxyCountTokensUpstream(w http.ResponseWriter, r *http.Request,
 		p.writeError(w, http.StatusBadGateway, "读取上游响应失败: "+err.Error())
 		return
 	}
+	logUpstreamAbnormalResponse(resp.StatusCode, provider.Name, upstreamModel, "/v1/messages/count_tokens", resp.Header.Get("Content-Type"), respBody)
 
 	// 透传上游状态码和响应体
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
@@ -342,13 +346,22 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 	}
 	defer resp.Body.Close()
 
+	providerName := result.Provider.Name
+	upstreamModel := result.Model
+	if isAbnormalUpstreamStatus(resp.StatusCode) {
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			p.writeError(w, http.StatusBadGateway, "读取上游响应失败: "+err.Error())
+			return
+		}
+		logUpstreamAbnormalResponse(resp.StatusCode, providerName, upstreamModel, path, resp.Header.Get("Content-Type"), respBody)
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+	}
+
 	// 判断是否为流式响应
 	contentType := resp.Header.Get("Content-Type")
 	isStream := strings.Contains(contentType, "text/event-stream") ||
 		strings.Contains(contentType, "text/stream")
-
-	providerName := result.Provider.Name
-	upstreamModel := result.Model
 
 	if isStream {
 		// 根据客户端协议选择不同的流式响应处理
@@ -807,6 +820,30 @@ func (p *Proxy) handleNormalResponse(ctx context.Context, w http.ResponseWriter,
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(transformed)
+}
+
+func isAbnormalUpstreamStatus(status int) bool {
+	return status < http.StatusOK || status >= http.StatusMultipleChoices
+}
+
+func logUpstreamAbnormalResponse(status int, providerName, upstreamModel, path, contentType string, body []byte) {
+	if !isAbnormalUpstreamStatus(status) {
+		return
+	}
+
+	bodyText := string(body)
+	if len(body) > maxLoggedUpstreamBodyBytes {
+		bodyText = string(body[:maxLoggedUpstreamBodyBytes]) + "...(truncated)"
+	}
+
+	slog.Error("上游返回非正常状态",
+		"path", path,
+		"provider", providerName,
+		"upstream_model", upstreamModel,
+		"status", status,
+		"content_type", contentType,
+		"body", bodyText,
+	)
 }
 
 // writeError 写入错误响应
