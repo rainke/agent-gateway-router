@@ -373,6 +373,11 @@ func TestHandleMessagesCountTokens_AnthropicProvider_UpstreamError(t *testing.T)
 	}))
 	defer upstream.Close()
 
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previousLogger)
+
 	p := newTestProxyWithAnthropicProvider(upstream.URL + "/v1/messages")
 
 	body := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`
@@ -384,6 +389,19 @@ func TestHandleMessagesCountTokens_AnthropicProvider_UpstreamError(t *testing.T)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("状态码期望 400（透传上游错误），实际 %d", w.Code)
+	}
+
+	logOutput := logs.String()
+	for _, want := range []string{
+		"上游返回非正常状态",
+		"path=/v1/messages/count_tokens",
+		"provider=anthropic-provider",
+		"status=400",
+		"bad request",
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("日志应包含 %q，实际日志: %s", want, logOutput)
+		}
 	}
 }
 
@@ -1407,6 +1425,37 @@ func TestHandleMessages_LogsUpstreamAbnormalResponse(t *testing.T) {
 		if !strings.Contains(logOutput, want) {
 			t.Fatalf("日志应包含 %q，实际日志: %s", want, logOutput)
 		}
+	}
+}
+
+func TestLogUpstreamAbnormalResponse_SkipsNormalStatus(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previousLogger)
+
+	logUpstreamAbnormalResponse(http.StatusOK, "provider", "model", "/v1/messages", "application/json", []byte(`{"ok":true}`))
+
+	if logs.Len() != 0 {
+		t.Fatalf("正常上游状态不应记录错误日志，实际日志: %s", logs.String())
+	}
+}
+
+func TestLogUpstreamAbnormalResponse_TruncatesBody(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previousLogger)
+
+	body := strings.Repeat("a", maxLoggedUpstreamBodyBytes+20)
+	logUpstreamAbnormalResponse(http.StatusBadGateway, "provider", "model", "/v1/messages", "text/plain", []byte(body))
+
+	logOutput := logs.String()
+	if !strings.Contains(logOutput, "...(truncated)") {
+		t.Fatalf("超长上游响应体应被截断，实际日志: %s", logOutput)
+	}
+	if strings.Contains(logOutput, strings.Repeat("a", maxLoggedUpstreamBodyBytes+20)) {
+		t.Fatalf("日志不应包含完整超长响应体")
 	}
 }
 
