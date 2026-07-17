@@ -29,7 +29,6 @@ func New(cfg *config.Config) *Server {
 	mux.HandleFunc("/v1/messages", p.HandleMessages)
 	mux.HandleFunc("/v1/messages/count_tokens", p.HandleMessagesCountTokens)
 	mux.HandleFunc("/v1/responses", p.HandleResponses)
-	mux.HandleFunc("/v1/models", p.HandleModels)
 
 	// 二期 Ollama 端点，一期返回 501
 	mux.HandleFunc("/api/chat", p.HandleNotImplemented)

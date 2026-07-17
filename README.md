@@ -157,7 +157,6 @@ agr restart   # 重启
 port = 9999
 log_level = "info"              # debug | trace | info | warn | error
 pid_file = "~/.agr/agr.pid"
-models_config = "models_config.json"  # 可选，Codex 模型元数据
 
 # ── 提供商定义 ──────────────────────────────────────────────
 
@@ -225,7 +224,6 @@ default = "zhipu,glm-5-oc"
 | `port` | int | `9999` | 本地监听端口 |
 | `log_level` | string | `"info"` | 日志级别：`debug` / `trace` / `info` / `warn` / `error`（从详细到简略） |
 | `pid_file` | string | `"~/.agr/agr.pid"` | PID 文件路径 |
-| `models_config` | string | — | 模型元数据配置文件路径（相对于 `~/.agr/`） |
 
 #### `[[providers]]`
 
@@ -301,6 +299,7 @@ requires_openai_auth = false
 model = "mimo-v2.5-pro"
 model_provider = "agr"
 model_reasoning_effort = "medium"
+model_catalog_json = "/Users/me/.codex/agr-model-catalog.json"
 ```
 
 启动 Codex 时指定 agr profile：
@@ -312,11 +311,11 @@ codex -p agr
 
 > **提示**：Codex 0.134.0 起，`-p agr` 会在 `~/.codex/config.toml` 之上叠加读取 `~/.codex/agr.config.toml`，不再读取 `~/.codex/config.toml` 中的 `[profiles.agr]`。Codex 走 `/v1/responses` 端点，使用 OpenAI Responses API 协议。如果上游提供商支持 Responses API（如 FreeModel），使用 `transformer = ["openai-responses"]` 配置。
 
-### Codex 模型元数据（models_config.json）
+### Codex 模型元数据（model_catalog_json）
 
-Codex 在启动时调用 `/v1/models` 发现可用模型。`models_config.json` 让你精确声明每个模型的能力，使 Codex 显示正确的推理级别、上下文窗口等控件。
+agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数据应通过 Codex 自己的 `model_catalog_json` 配置加载。`model_catalog_json` 是 Codex 配置中的 JSON 模型目录路径，推荐在 `~/.codex/agr.config.toml` 这个 agr profile 中配置，这样只在 `codex -p agr` 时生效。
 
-创建 `~/.agr/models_config.json`：
+创建 `~/.codex/agr-model-catalog.json`：
 
 ```json
 {
@@ -370,7 +369,7 @@ Codex 在启动时调用 `/v1/models` 发现可用模型。`models_config.json` 
 }
 ```
 
-> **说明**：如果不提供 `models_config.json`，agr 会根据路由配置自动生成模型条目，但自动生成的元数据可能与实际上游能力不匹配。
+> **说明**：`model_catalog_json` 可以放在 `~/.codex/config.toml` 顶层，也可以放在 `~/.codex/agr.config.toml` profile 文件中；同时存在时，Codex 会使用当前 profile 中的值。请确保 JSON 中的 `slug` 与 `~/.codex/agr.config.toml` 里的 `model` 以及 agr `[router]` 中的客户端模型名一致。
 
 ## 转换器详解
 
@@ -460,7 +459,6 @@ transformer = ["openai-responses"]
 |------|------|-----------|------|
 | `/v1/messages` | Anthropic Messages API | Claude Code | ✅ 已实现 |
 | `/v1/responses` | OpenAI Responses API | Codex | ✅ 已实现 |
-| `/v1/models` | OpenAI Models API | 模型发现 | ✅ 已实现 |
 | `/health` | — | 健康检查 | ✅ 已实现 |
 
 > **VS Code Copilot 集成**：VS Code 1.122+ 原生支持自定义 OpenAI 兼容端点，无需 Ollama 协议伪装。在 VS Code 设置中配置 `chat.agent.customEndpoint` 指向 `http://localhost:9999` 即可。
@@ -500,7 +498,6 @@ Claude Code `settings.json`：
 ```toml
 [server]
 port = 9999
-models_config = "models_config.json"
 
 # Claude Code 走这个提供商（Anthropic 协议）
 [[providers]]

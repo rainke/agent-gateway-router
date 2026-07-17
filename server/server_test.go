@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,23 @@ func TestNew(t *testing.T) {
 	}
 	if srv.httpServer == nil {
 		t.Fatal("httpServer 为 nil")
+	}
+}
+
+func TestModelsEndpointNotRegistered(t *testing.T) {
+	cfg := newTestConfig()
+	srv := New(cfg)
+
+	req, err := http.NewRequest(http.MethodGet, "/v1/models", nil)
+	if err != nil {
+		t.Fatalf("创建 models 请求失败: %v", err)
+	}
+	rec := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/v1/models 状态码期望 404，实际 %d", rec.Code)
 	}
 }
 
