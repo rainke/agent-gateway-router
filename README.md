@@ -231,7 +231,7 @@ default = "zhipu,glm-5-oc"
 |------|------|------|
 | `name` | string | 提供商唯一名称，在路由中引用 |
 | `api_base_url` | string | 上游 API 完整地址 |
-| `api_key` | string | 上游 API 密钥 |
+| `api_key` | string | 上游 API 密钥；支持 `"env:VAR_NAME"` 形式从环境变量读取 |
 | `models` | []string | 该提供商支持的模型列表 |
 | `transformer` | []string | 转换器链，按数组顺序执行 |
 
@@ -652,6 +652,7 @@ docs: update README with client configuration examples
 ## 安全注意事项
 
 - **API Key 保密**：`config.toml` 中的 `api_key` 是敏感信息，不要提交到公开仓库
+- **环境变量引用**：`api_key` 可写为 `"env:OPENAI_API_KEY"`，启动时从同名环境变量读取，避免密钥落盘
 - **日志脱敏**：agr 不会记录完整的 Authorization 头或上游响应体
 - **本地运行**：默认绑定 `localhost`，仅本机可访问
 - **配置文件权限**：建议设置 `chmod 600 ~/.agr/config.toml`

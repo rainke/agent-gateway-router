@@ -56,6 +56,15 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
+	// 解析 api_key 中的 env: 环境变量引用
+	for i := range cfg.Providers {
+		resolved, err := resolveEnvAPIKey(cfg.Providers[i].Name, cfg.Providers[i].APIKey)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Providers[i].APIKey = resolved
+	}
+
 	// 展开路径中的 ~
 	cfg.Server.PIDFile = expandPath(cfg.Server.PIDFile)
 
@@ -143,6 +152,24 @@ func IsValidTransformer(name string) bool {
 		"openai-responses": true,
 	}
 	return registry[name]
+}
+
+// resolveEnvAPIKey 将 api_key 中 "env:VAR_NAME" 形式的值解析为环境变量值。
+// 不以 "env:" 开头的 api_key 原样返回。
+func resolveEnvAPIKey(providerName, apiKey string) (string, error) {
+	const prefix = "env:"
+	if !strings.HasPrefix(apiKey, prefix) {
+		return apiKey, nil
+	}
+	varName := strings.TrimPrefix(apiKey, prefix)
+	if varName == "" {
+		return "", fmt.Errorf("配置错误: provider %s 的 api_key 使用了 env: 前缀但未指定环境变量名称", providerName)
+	}
+	value := os.Getenv(varName)
+	if value == "" {
+		return "", fmt.Errorf("配置错误: provider %s 的 api_key 引用的环境变量 %s 未设置或为空", providerName, varName)
+	}
+	return value, nil
 }
 
 // expandPath 展开路径中的 ~ 为用户目录

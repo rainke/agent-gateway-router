@@ -430,3 +430,128 @@ special = "provider-b,model-3"
 		t.Errorf("Provider 数量期望 2，实际 %d", len(cfg.Providers))
 	}
 }
+
+func TestLoad_APIKeyFromEnv(t *testing.T) {
+	const envVar = "AGR_TEST_API_KEY"
+	t.Setenv(envVar, "sk-env-secret")
+
+	content := `
+[server]
+port = 8080
+log_level = "info"
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "env-provider"
+api_base_url = "http://localhost:8000"
+api_key = "env:` + envVar + `"
+models = ["model-a"]
+transformer = ["openai"]
+
+[router]
+default = "env-provider,model-a"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载 env api_key 配置失败: %v", err)
+	}
+	if cfg.Providers[0].APIKey != "sk-env-secret" {
+		t.Errorf("api_key 期望从环境变量解析为 sk-env-secret，实际 %q", cfg.Providers[0].APIKey)
+	}
+}
+
+func TestLoad_APIKeyFromEnv_Missing(t *testing.T) {
+	const envVar = "AGR_TEST_API_KEY_UNSET"
+	t.Setenv(envVar, "")
+
+	content := `
+[server]
+port = 8080
+log_level = "info"
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "env-provider"
+api_base_url = "http://localhost:8000"
+api_key = "env:` + envVar + `"
+models = ["model-a"]
+transformer = ["openai"]
+
+[router]
+default = "env-provider,model-a"
+`
+	path := writeTempConfig(t, content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("期望环境变量未设置时返回错误")
+	}
+	if !strings.Contains(err.Error(), "env-provider") || !strings.Contains(err.Error(), envVar) {
+		t.Errorf("错误信息应包含 provider 名称和环境变量名称，实际: %v", err)
+	}
+}
+
+func TestLoad_APIKeyFromEnv_EmptyVarName(t *testing.T) {
+	content := `
+[server]
+port = 8080
+log_level = "info"
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "env-provider"
+api_base_url = "http://localhost:8000"
+api_key = "env:"
+models = ["model-a"]
+transformer = ["openai"]
+
+[router]
+default = "env-provider,model-a"
+`
+	path := writeTempConfig(t, content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("期望 env: 未指定环境变量名称时返回错误")
+	}
+}
+
+func TestLoad_APIKeyFromEnv_MixedProviders(t *testing.T) {
+	const envVar = "AGR_TEST_API_KEY_MIXED"
+	t.Setenv(envVar, "sk-env-mixed")
+
+	content := `
+[server]
+port = 8080
+log_level = "info"
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "plain-provider"
+api_base_url = "http://a.com"
+api_key = "sk-plain"
+models = ["model-a"]
+transformer = ["openai"]
+
+[[providers]]
+name = "env-provider"
+api_base_url = "http://b.com"
+api_key = "env:` + envVar + `"
+models = ["model-b"]
+transformer = ["openai"]
+
+[router]
+default = "plain-provider,model-a"
+special = "env-provider,model-b"
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载混合 api_key 配置失败: %v", err)
+	}
+	if cfg.Providers[0].APIKey != "sk-plain" {
+		t.Errorf("普通 api_key 期望保持 sk-plain，实际 %q", cfg.Providers[0].APIKey)
+	}
+	if cfg.Providers[1].APIKey != "sk-env-mixed" {
+		t.Errorf("env api_key 期望解析为 sk-env-mixed，实际 %q", cfg.Providers[1].APIKey)
+	}
+}
