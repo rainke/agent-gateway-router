@@ -31,9 +31,6 @@ api_base_url = "http://localhost:8000"
 api_key = "sk-test"
 models = ["model-a", "model-b"]
 
-[router]
-default = "test-provider,model-a"
-my-model = "test-provider,model-b"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path)
@@ -58,12 +55,6 @@ my-model = "test-provider,model-b"
 	}
 	if len(cfg.Providers[0].Models) != 2 {
 		t.Errorf("模型数量期望 2，实际 %d", len(cfg.Providers[0].Models))
-	}
-	if cfg.Router["default"] != "test-provider,model-a" {
-		t.Errorf("默认路由不匹配")
-	}
-	if cfg.Router["my-model"] != "test-provider,model-b" {
-		t.Errorf("模型路由不匹配")
 	}
 }
 
@@ -115,8 +106,6 @@ api_base_url = "http://localhost:8000"
 api_key = "sk-test"
 models = ["model-a"]
 
-[router]
-default = "test-provider,model-a"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path)
@@ -192,8 +181,6 @@ api_base_url = "http://b.com"
 api_key = "sk-2"
 models = ["m2"]
 
-[router]
-default = "dup,m1"
 `
 	path := writeTempConfig(t, content)
 	_, err := Load(path)
@@ -215,8 +202,6 @@ api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
 
-[router]
-default = ",m1"
 `
 	path := writeTempConfig(t, content)
 	_, err := Load(path)
@@ -239,8 +224,6 @@ api_key = "sk-1"
 models = ["m1"]
 transformer = ["nonexistent-transformer"]
 
-[router]
-default = "p1,m1"
 `
 	path := writeTempConfig(t, content)
 	_, err := Load(path)
@@ -249,72 +232,29 @@ default = "p1,m1"
 	}
 }
 
-func TestLoad_RouterReferencesNonexistentProvider(t *testing.T) {
-	content := `
-[server]
-port = 8080
-log_level = "info"
-pid_file = "/tmp/test.pid"
-
+func TestLoad_LegacyRouterIgnored(t *testing.T) {
+	path := writeTempConfig(t, `[server]
+port = 9999
 [[providers]]
 name = "p1"
-api_base_url = "http://a.com"
-api_key = "sk-1"
 models = ["m1"]
-
 [router]
-default = "nonexistent,m1"
-`
-	path := writeTempConfig(t, content)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("期望路由引用不存在的 Provider 时返回错误")
+default = "invalid-old-route"
+`)
+	if _, err := Load(path); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestLoad_RouterReferencesNonexistentModel(t *testing.T) {
-	content := `
-[server]
-port = 8080
-log_level = "info"
-pid_file = "/tmp/test.pid"
-
+func TestLoad_ProviderNameWithSlash(t *testing.T) {
+	path := writeTempConfig(t, `[server]
+port = 9999
 [[providers]]
-name = "p1"
-api_base_url = "http://a.com"
-api_key = "sk-1"
+name = "bad/provider"
 models = ["m1"]
-
-[router]
-default = "p1,nonexistent-model"
-`
-	path := writeTempConfig(t, content)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("期望路由引用不存在的模型时返回错误")
-	}
-}
-
-func TestLoad_RouterInvalidFormat(t *testing.T) {
-	content := `
-[server]
-port = 8080
-log_level = "info"
-pid_file = "/tmp/test.pid"
-
-[[providers]]
-name = "p1"
-api_base_url = "http://a.com"
-api_key = "sk-1"
-models = ["m1"]
-
-[router]
-default = "invalid-format-no-comma"
-`
-	path := writeTempConfig(t, content)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("期望路由格式错误时返回错误")
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected invalid provider name")
 	}
 }
 
@@ -331,8 +271,6 @@ api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
 
-[router]
-default = "p1,m1"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path)
@@ -387,9 +325,6 @@ api_base_url = "http://b.com/v1"
 api_key = "sk-b"
 models = ["model-3"]
 
-[router]
-default = "provider-a,model-1"
-special = "provider-b,model-3"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path)
@@ -418,8 +353,6 @@ api_base_url = "http://localhost:8000"
 api_key = "env:` + envVar + `"
 models = ["model-a"]
 
-[router]
-default = "env-provider,model-a"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path)
@@ -447,8 +380,6 @@ api_base_url = "http://localhost:8000"
 api_key = "env:` + envVar + `"
 models = ["model-a"]
 
-[router]
-default = "env-provider,model-a"
 `
 	path := writeTempConfig(t, content)
 	_, err := Load(path)
@@ -473,8 +404,6 @@ api_base_url = "http://localhost:8000"
 api_key = "env:"
 models = ["model-a"]
 
-[router]
-default = "env-provider,model-a"
 `
 	path := writeTempConfig(t, content)
 	_, err := Load(path)
@@ -505,9 +434,6 @@ api_base_url = "http://b.com"
 api_key = "env:` + envVar + `"
 models = ["model-b"]
 
-[router]
-default = "plain-provider,model-a"
-special = "env-provider,model-b"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path)

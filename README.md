@@ -7,9 +7,9 @@
 | 痛点 | agr 的解决方案 |
 |------|---------------|
 | 多个 AI 客户端使用不同 API | 同一端口代理 Messages、Responses 和 Chat Completions，由上游原生处理 |
-| 想把 Claude Code 的请求转发到 DeepSeek / GLM / Mimo 等国产模型 | 声明式路由配置，一条映射搞定 |
+| 想把 Claude Code 的请求转发到 DeepSeek / GLM / Mimo 等国产模型 | 通过 `<provider>/<model>` 选择上游 |
 | 每个客户端都要单独配置 API Key 和 Base URL | 统一网关入口，客户端只需指向 `localhost:9999` |
-| 需要在多个提供商之间切换或做 fallback | 按模型名精确路由，未命中时回退到默认提供商 |
+| 需要在多个提供商之间切换 | 通过模型名中的提供商前缀明确选择上游 |
 
 ## 架构总览
 
@@ -27,11 +27,11 @@
 ## 功能特性
 
 - **原生 API 代理** — Messages、Responses、Chat Completions 和 Messages count_tokens
-- **模型路由** — 精确匹配模型名，未命中时使用默认路由
+- **模型路由** — 通过 `<provider>/<model>` 选择提供商和模型
 - **流式传输** — 保留 SSE 的 event、data、id、注释和结束事件，客户端断开时取消上游请求
 - **用量统计** — 旁路读取原生 JSON / SSE usage，不修改响应；压缩响应及超过统计缓冲上限（4 MiB）的响应或事件跳过统计
 - **守护进程管理** — `start`/`stop`/`restart`，PID 管理和优雅停机
-- **TOML 配置** — 校验路由及提供商，支持环境变量凭据
+- **TOML 配置** — 校验提供商配置，支持环境变量凭据
 
 ## 安装
 
@@ -89,10 +89,6 @@ name = "deepseek"
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-your-key-here"
 models = ["deepseek-chat"]
-
-# 路由：客户端请求任何模型时，都转发到 DeepSeek
-[router]
-default = "deepseek,deepseek-chat"
 ```
 
 ### 2. 启动网关
@@ -169,19 +165,6 @@ api_base_url = "https://api.freemodel.example.com/v1"
 api_key = "your-freemodel-key"
 models = ["gpt-5.5", "gpt-5.3-codex"]
 
-# ── 路由映射 ────────────────────────────────────────────────
-
-[router]
-# 格式：客户端模型名 = "提供商名,上游真实模型名"
-
-# 默认路由：未匹配的模型走这条路
-default = "zhipu,glm-5-oc"
-
-# 按模型名精确路由
-"glm-5"                    = "zhipu,glm-5-oc"
-"mimo-v2.5-pro"            = "mimo,mimo-v2.5-pro"
-"mimo-v2.5-pro-anthropic"  = "mimo-anthropic,mimo-v2.5-pro"
-"gpt-5.5"                  = "freemodel,gpt-5.5"
 ```
 
 ### 配置字段说明
@@ -198,25 +181,24 @@ default = "zhipu,glm-5-oc"
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `name` | string | 提供商唯一名称，在路由中引用 |
+| `name` | string | 提供商唯一名称，不能包含 `/`，作为对外模型名前缀 |
 | `api_base_url` | string | 上游 API 基础地址（主机或带路径前缀） |
 | `api_key` | string | 上游 API 密钥；支持 `"env:VAR_NAME"` 形式从环境变量读取 |
 | `models` | []string | 该提供商支持的模型列表 |
 
-#### `[router]`
+#### 对外模型名
 
-| 字段 | 格式 | 说明 |
-|------|------|------|
-| `default` | `"provider,model"` | 未匹配时的默认路由 |
-| `<model_name>` | `"provider,model"` | 客户端请求该模型名时的精确路由 |
+客户端使用 `<provider>/<model>`，例如 `deepseek/deepseek-chat` 或 `freemodel/gpt-5.5`。
+`provider` 必须匹配提供商名称，`model` 必须在该提供商的 `models` 列表中。
+只按第一个 `/` 拆分，因此 `provider/org/model` 会向上游传递 `org/model`。
+不再支持模型别名或默认路由；旧 `[router]` 配置会被忽略，可直接删除。
 
 ### 配置校验规则
 
 agr 在启动时执行严格校验，以下情况会直接报错退出：
 
 - `providers.name` 重复
-- `router` 中引用的提供商不存在
-- `router` 中引用的模型不在对应提供商的 `models` 列表中
+- `providers.name` 为空或包含 `/`
 - 端口号不合法
 
 ## 客户端集成
@@ -231,7 +213,7 @@ agr 在启动时执行严格校验，以下情况会直接报错退出：
     "ANTHROPIC_BASE_URL": "http://localhost:9999",
     "ANTHROPIC_AUTH_TOKEN": "your-auth-token"
   },
-  "model": "glm-5"
+  "model": "zhipu/glm-5-oc"
 }
 ```
 
@@ -262,7 +244,7 @@ requires_openai_auth = false
 创建 `~/.codex/agr.config.toml`，保存 agr profile：
 
 ```toml
-model = "mimo-v2.5-pro"
+model = "mimo/mimo-v2.5-pro"
 model_provider = "agr"
 model_reasoning_effort = "medium"
 model_catalog_json = "/Users/me/.codex/agr-model-catalog.json"
@@ -287,7 +269,7 @@ agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数�
 {
   "models": [
     {
-      "slug": "glm-5",
+      "slug": "zhipu/glm-5-oc",
       "display_name": "GLM-5-OC",
       "description": "智谱 GLM-5-OC 大语言模型，支持长上下文对话与工具调用",
       "supported_reasoning_levels": [
@@ -301,7 +283,7 @@ agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数�
       "input_modalities": ["text"]
     },
     {
-      "slug": "mimo-v2.5-pro",
+      "slug": "mimo/mimo-v2.5-pro",
       "display_name": "Mimo-V2.5-pro",
       "description": "小米旗舰模型",
       "supported_reasoning_levels": [
@@ -315,7 +297,7 @@ agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数�
       "input_modalities": ["text"]
     },
     {
-      "slug": "gpt-5.5",
+      "slug": "freemodel/gpt-5.5",
       "display_name": "GPT-5.5",
       "description": "OpenAI 旗下最新模型",
       "supported_reasoning_levels": [
@@ -335,7 +317,7 @@ agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数�
 }
 ```
 
-> **说明**：`model_catalog_json` 可以放在 `~/.codex/config.toml` 顶层，也可以放在 `~/.codex/agr.config.toml` profile 文件中；同时存在时，Codex 会使用当前 profile 中的值。请确保 JSON 中的 `slug` 与 `~/.codex/agr.config.toml` 里的 `model` 以及 agr `[router]` 中的客户端模型名一致。
+> **说明**：`model_catalog_json` 可以放在 `~/.codex/config.toml` 顶层，也可以放在 `~/.codex/agr.config.toml` profile 文件中；同时存在时，Codex 会使用当前 profile 中的值。请确保 JSON 中的 `slug` 与 `~/.codex/agr.config.toml` 里的 `model` 一致，均使用 agr 的 `<provider>/<model>` 格式。
 
 ## 代理行为与配置迁移
 
@@ -385,9 +367,6 @@ name = "mimo"
 api_base_url = "https://api.mimo.example.com/v1"
 api_key = "your-key"
 models = ["mimo-v2.5-pro"]
-
-[router]
-default = "mimo,mimo-v2.5-pro"
 ```
 
 Claude Code `settings.json`：
@@ -397,7 +376,7 @@ Claude Code `settings.json`：
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:9999"
   },
-  "model": "mimo-v2.5-pro"
+  "model": "mimo/mimo-v2.5-pro"
 }
 ```
 
@@ -420,10 +399,6 @@ name = "freemodel"
 api_base_url = "https://api.freemodel.example.com/v1"
 api_key = "your-key"
 models = ["gpt-5.5"]
-
-[router]
-"mimo-v2.5-pro" = "mimo-anthropic,mimo-v2.5-pro"
-"gpt-5.5"       = "freemodel,gpt-5.5"
 ```
 
 ### 场景 3：多提供商 + DeepSeek
@@ -449,12 +424,6 @@ name = "deepseek"
 api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-deepseek-key"
 models = ["deepseek-chat"]
-
-[router]
-default         = "zhipu,glm-5-oc"
-"glm-5"         = "zhipu,glm-5-oc"
-"glm-5.1"       = "opencode,glm-5.1"
-"deepseek-chat" = "deepseek,deepseek-chat"
 ```
 
 ## 项目结构
@@ -560,7 +529,7 @@ agr start -p 8080
 
 **Q: 如何让 Claude Code 和 Codex 同时使用同一个网关？**
 
-在路由配置中为不同模型设置不同提供商，Claude Code 请求走 Anthropic 协议端点，Codex 走 Responses 协议端点，agr 保持各自 API 格式并转发到对应端点。参考上方"场景 2"。
+在客户端使用 `<provider>/<model>` 选择不同提供商，Claude Code 请求走 Anthropic 协议端点，Codex 走 Responses 协议端点，agr 保持各自 API 格式并转发到对应端点。参考上方"场景 2"。
 
 **Q: VS Code Copilot 如何连接网关？**
 

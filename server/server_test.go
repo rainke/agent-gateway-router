@@ -26,9 +26,6 @@ func newTestConfig() *config.Config {
 				Models:     []string{"m1"},
 			},
 		},
-		Router: map[string]string{
-			"default": "test,m1",
-		},
 	}
 }
 
@@ -114,7 +111,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	}
 
 	// 测试 Claude count_tokens 端点
-	countBody := `{"model":"claude-3","messages":[{"role":"user","content":"hello"}]}`
+	countBody := `{"model":"test/m1","messages":[{"role":"user","content":"hello"}]}`
 	resp3, err := http.Post("http://localhost:19877/v1/messages/count_tokens", "application/json", strings.NewReader(countBody))
 	if err != nil {
 		t.Fatalf("count_tokens 请求失败: %v", err)
@@ -160,7 +157,7 @@ func TestChatCompletionsForwarded(t *testing.T) {
 	cfg.Providers[0].APIBaseURL = upstream.URL
 	srv := New(cfg)
 	rec := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test"}`)))
+	srv.httpServer.Handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test/m1"}`)))
 	if rec.Code != 200 || rec.Body.String() != `{"choices":[]}` {
 		t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
 	}

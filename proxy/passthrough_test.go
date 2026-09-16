@@ -48,7 +48,7 @@ func TestPassthrough(t *testing.T) {
 				}))
 				defer upstream.Close()
 				p := newTestProxy(upstream.URL + "/v1")
-				req := httptest.NewRequest("POST", path+"?beta=1", strings.NewReader(`{"model":"claude-3","reasoning_effort":"xhigh","custom":9007199254740993,"messages":[{"content":[{"type":"tool_result"}]}]}`))
+				req := httptest.NewRequest("POST", path+"?beta=1", strings.NewReader(`{"model":"test-provider/model-a","reasoning_effort":"xhigh","custom":9007199254740993,"messages":[{"content":[{"type":"tool_result"}]}]}`))
 				req.Header.Set("Anthropic-Version", "2023-06-01")
 				req.Header.Set("Anthropic-Beta", "test-beta")
 				req.Header.Set("X-Api-Key", "client-placeholder")
@@ -80,7 +80,7 @@ func TestPassthroughCountTokens(t *testing.T) {
 	defer upstream.Close()
 	p := newTestProxy(upstream.URL)
 	rec := httptest.NewRecorder()
-	p.HandleMessagesCountTokens(rec, httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(`{"model":"claude-3"}`)))
+	p.HandleMessagesCountTokens(rec, httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(`{"model":"test-provider/model-a"}`)))
 	if rec.Code != 429 || rec.Header().Get("Retry-After") != "15" || rec.Body.String() != `{"error":{"type":"rate_limit"}}` {
 		t.Fatalf("response=%d %s %s", rec.Code, rec.Header(), rec.Body.String())
 	}
@@ -105,7 +105,7 @@ func TestPassthroughURLs(t *testing.T) {
 			}))
 			defer upstream.Close()
 			rec := httptest.NewRecorder()
-			newTestProxy(upstream.URL+tc.base).handleProxy(rec, httptest.NewRequest("POST", tc.path, strings.NewReader(`{"model":"claude-3"}`)), tc.path)
+			newTestProxy(upstream.URL+tc.base).handleProxy(rec, httptest.NewRequest("POST", tc.path, strings.NewReader(`{"model":"test-provider/model-a"}`)), tc.path)
 			if rec.Code != 200 {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
@@ -125,7 +125,7 @@ func TestPassthroughErrorsAndRedirect(t *testing.T) {
 			}))
 			defer upstream.Close()
 			rec := httptest.NewRecorder()
-			newTestProxy(upstream.URL).HandleMessages(rec, httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"claude-3"}`)))
+			newTestProxy(upstream.URL).HandleMessages(rec, httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"test-provider/model-a"}`)))
 			if rec.Code != status || rec.Body.String() != "upstream error\n" || rec.Header().Get("Retry-After") != "30" {
 				t.Fatalf("response=%d %s %s", rec.Code, rec.Header(), rec.Body.String())
 			}
@@ -148,7 +148,7 @@ func TestPassthroughUsage(t *testing.T) {
 			}))
 			defer upstream.Close()
 			rec := httptest.NewRecorder()
-			newTestProxy(upstream.URL).HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"claude-3"}`)))
+			newTestProxy(upstream.URL).HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"test-provider/model-a"}`)))
 			if rec.Body.String() != tc.body {
 				t.Fatal("usage observer changed response")
 			}
@@ -185,7 +185,7 @@ func TestPassthroughFlushAndCancel(t *testing.T) {
 	defer gateway.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "POST", gateway.URL+"/v1/messages", strings.NewReader(`{"model":"claude-3","stream":true}`))
+	req, _ := http.NewRequestWithContext(ctx, "POST", gateway.URL+"/v1/messages", strings.NewReader(`{"model":"test-provider/model-a","stream":true}`))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -227,14 +227,13 @@ func TestPassthroughGatewayErrors(t *testing.T) {
 	for _, base := range []string{"http://127.0.0.1:1", "ftp://example.com", "/relative", "http://%invalid"} {
 		t.Run(base, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			newTestProxy(base).HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"m1"}`)))
+			newTestProxy(base).HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"test-provider/model-a"}`)))
 			if rec.Code != 502 {
 				t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
 			}
 		})
 	}
 	p := newTestProxy("http://localhost:1")
-	delete(p.cfg.Router, "default")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"unknown"}`)))
 	if rec.Code != 502 {
@@ -242,11 +241,12 @@ func TestPassthroughGatewayErrors(t *testing.T) {
 	}
 }
 
-func TestPassthroughUnchangedModelAndCredentials(t *testing.T) {
+func TestPassthroughModelAndCredentials(t *testing.T) {
 	body := "{ \"model\": \"model-a\", \"input\": \"<hello>\" }\n"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received, _ := io.ReadAll(r.Body)
-		if string(received) != body {
+		var payload map[string]string
+		if err := json.Unmarshal(received, &payload); err != nil || len(payload) != 2 || payload["model"] != "model-a" || payload["input"] != "<hello>" {
 			t.Errorf("body changed: %q", received)
 		}
 		if r.Header.Get("Authorization") != "Bearer client-key" || r.Header.Get("X-Api-Key") != "client-api-key" {
@@ -265,7 +265,7 @@ func TestPassthroughUnchangedModelAndCredentials(t *testing.T) {
 	defer upstream.Close()
 	p := newTestProxy(upstream.URL + "?configured=1")
 	p.cfg.Providers[0].APIKey = ""
-	req := httptest.NewRequest("POST", "/v1/chat/completions?beta=2", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/v1/chat/completions?beta=2", strings.NewReader(strings.Replace(body, "model-a", "test-provider/model-a", 1)))
 	req.Header.Set("Authorization", "Bearer client-key")
 	req.Header.Set("X-Api-Key", "client-api-key")
 	req.Header.Set("Connection", "X-Hop")
@@ -301,7 +301,7 @@ func TestPassthroughLargeStream(t *testing.T) {
 	}))
 	defer upstream.Close()
 	rec := httptest.NewRecorder()
-	newTestProxy(upstream.URL).HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"m1"}`)))
+	newTestProxy(upstream.URL).HandleResponses(rec, httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"test-provider/model-a"}`)))
 	if rec.Body.String() != body {
 		t.Fatalf("large SSE changed: got %d want %d bytes", rec.Body.Len(), len(body))
 	}
@@ -326,7 +326,7 @@ func TestPassthroughUsageExclusions(t *testing.T) {
 			}))
 			defer upstream.Close()
 			rec := httptest.NewRecorder()
-			newTestProxy(upstream.URL).handleProxy(rec, httptest.NewRequest("POST", tc.path, strings.NewReader(`{"model":"test"}`)), tc.path)
+			newTestProxy(upstream.URL).handleProxy(rec, httptest.NewRequest("POST", tc.path, strings.NewReader(`{"model":"test-provider/model-a"}`)), tc.path)
 			if rec.Code != tc.status || rec.Body.String() != tc.body {
 				t.Fatal("response changed")
 			}

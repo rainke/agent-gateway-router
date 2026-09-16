@@ -11,9 +11,8 @@ import (
 
 // Config 是 agr 的顶层配置结构
 type Config struct {
-	Server    ServerConfig      `mapstructure:"server"`
-	Providers []Provider        `mapstructure:"providers"`
-	Router    map[string]string `mapstructure:"router"`
+	Server    ServerConfig `mapstructure:"server"`
+	Providers []Provider   `mapstructure:"providers"`
 }
 
 // ServerConfig 服务器配置
@@ -95,40 +94,13 @@ func validate(cfg *Config) error {
 		if p.Name == "" {
 			return fmt.Errorf("配置错误: providers[%d].name 不能为空", i)
 		}
+		if strings.Contains(p.Name, "/") {
+			return fmt.Errorf("配置错误: providers[%d].name 不能包含 /", i)
+		}
 		if _, exists := providerMap[p.Name]; exists {
 			return fmt.Errorf("配置错误: providers.name 重复: %s", p.Name)
 		}
 		providerMap[p.Name] = p
-	}
-
-	// 校验路由映射
-	for model, route := range cfg.Router {
-		if model == "default" {
-			// default 路由也需要校验
-		}
-		parts := strings.SplitN(route, ",", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("配置错误: router.%s 格式错误，应为 'provider_name,model_name'，当前值: %s", model, route)
-		}
-		providerName := strings.TrimSpace(parts[0])
-		modelName := strings.TrimSpace(parts[1])
-
-		provider, exists := providerMap[providerName]
-		if !exists {
-			return fmt.Errorf("配置错误: router.%s 引用了不存在的 provider: %s", model, providerName)
-		}
-
-		// 校验模型是否在 Provider 的 models 列表中
-		found := false
-		for _, m := range provider.Models {
-			if m == modelName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("配置错误: router.%s 引用的模型 %s 不在 provider %s 的 models 列表中", model, modelName, providerName)
-		}
 	}
 
 	return nil

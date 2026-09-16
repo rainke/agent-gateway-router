@@ -29,10 +29,6 @@ func newTestProxy(upstreamURL string) *Proxy {
 				Models:     []string{"model-a"},
 			},
 		},
-		Router: map[string]string{
-			"default":  "test-provider,model-a",
-			"claude-3": "test-provider,model-a",
-		},
 	}
 	r := router.New(cfg)
 	return New(cfg, r)
