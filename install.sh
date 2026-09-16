@@ -65,10 +65,9 @@ pid_file = "~/.agr/agr.pid"
 
 [[providers]]
 name = "deepseek"
-api_base_url = "https://api.deepseek.com/chat/completions"
+api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-xxx"
 models = ["deepseek-chat"]
-transformer = ["openai", "deepseek"]
 
 [router]
 default = "deepseek,deepseek-chat"

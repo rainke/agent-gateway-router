@@ -25,10 +25,11 @@ func New(cfg *config.Config) *Server {
 
 	mux := http.NewServeMux()
 
-	// 一期核心端点
+	// 原生 API 代理端点
 	mux.HandleFunc("/v1/messages", p.HandleMessages)
 	mux.HandleFunc("/v1/messages/count_tokens", p.HandleMessagesCountTokens)
 	mux.HandleFunc("/v1/responses", p.HandleResponses)
+	mux.HandleFunc("/v1/chat/completions", p.HandleChatCompletions)
 
 	// 二期 Ollama 端点，一期返回 501
 	mux.HandleFunc("/api/chat", p.HandleNotImplemented)

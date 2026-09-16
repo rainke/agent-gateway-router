@@ -25,11 +25,10 @@ type ServerConfig struct {
 
 // Provider 上游供应商配置
 type Provider struct {
-	Name        string   `mapstructure:"name"`
-	APIBaseURL  string   `mapstructure:"api_base_url"`
-	APIKey      string   `mapstructure:"api_key"`
-	Models      []string `mapstructure:"models"`
-	Transformer []string `mapstructure:"transformer"`
+	Name       string   `mapstructure:"name"`
+	APIBaseURL string   `mapstructure:"api_base_url"`
+	APIKey     string   `mapstructure:"api_key"`
+	Models     []string `mapstructure:"models"`
 }
 
 // Load 加载并校验配置文件
@@ -100,13 +99,6 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("配置错误: providers.name 重复: %s", p.Name)
 		}
 		providerMap[p.Name] = p
-
-		// 校验 Transformer 名称
-		for _, t := range p.Transformer {
-			if !IsValidTransformer(t) {
-				return fmt.Errorf("配置错误: provider %s 引用了未知的 transformer: %s", p.Name, t)
-			}
-		}
 	}
 
 	// 校验路由映射
@@ -140,18 +132,6 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
-}
-
-// IsValidTransformer 检查 Transformer 名称是否在注册表中
-func IsValidTransformer(name string) bool {
-	// 内置 Transformer 注册表
-	registry := map[string]bool{
-		"openai":           true,
-		"deepseek":         true,
-		"anthropic":        true,
-		"openai-responses": true,
-	}
-	return registry[name]
 }
 
 // resolveEnvAPIKey 将 api_key 中 "env:VAR_NAME" 形式的值解析为环境变量值。

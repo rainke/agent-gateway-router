@@ -30,7 +30,6 @@ name = "test-provider"
 api_base_url = "http://localhost:8000"
 api_key = "sk-test"
 models = ["model-a", "model-b"]
-transformer = ["openai"]
 
 [router]
 default = "test-provider,model-a"
@@ -115,7 +114,6 @@ name = "test-provider"
 api_base_url = "http://localhost:8000"
 api_key = "sk-test"
 models = ["model-a"]
-transformer = ["openai"]
 
 [router]
 default = "test-provider,model-a"
@@ -187,14 +185,12 @@ name = "dup"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai"]
 
 [[providers]]
 name = "dup"
 api_base_url = "http://b.com"
 api_key = "sk-2"
 models = ["m2"]
-transformer = ["openai"]
 
 [router]
 default = "dup,m1"
@@ -218,7 +214,6 @@ name = ""
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai"]
 
 [router]
 default = ",m1"
@@ -230,7 +225,7 @@ default = ",m1"
 	}
 }
 
-func TestLoad_InvalidTransformer(t *testing.T) {
+func TestLoad_IgnoresLegacyTransformer(t *testing.T) {
 	content := `
 [server]
 port = 8080
@@ -249,8 +244,8 @@ default = "p1,m1"
 `
 	path := writeTempConfig(t, content)
 	_, err := Load(path)
-	if err == nil {
-		t.Fatal("期望无效 Transformer 名称时返回错误")
+	if err != nil {
+		t.Fatalf("旧 transformer 配置应被忽略: %v", err)
 	}
 }
 
@@ -266,7 +261,6 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai"]
 
 [router]
 default = "nonexistent,m1"
@@ -290,7 +284,6 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai"]
 
 [router]
 default = "p1,nonexistent-model"
@@ -314,7 +307,6 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai"]
 
 [router]
 default = "invalid-format-no-comma"
@@ -338,7 +330,6 @@ name = "p1"
 api_base_url = "http://a.com"
 api_key = "sk-1"
 models = ["m1"]
-transformer = ["openai"]
 
 [router]
 default = "p1,m1"
@@ -353,24 +344,6 @@ default = "p1,m1"
 	expected := filepath.Join(home, "test/agr.pid")
 	if cfg.Server.PIDFile != expected {
 		t.Errorf("PID 文件路径展开错误，期望 %s，实际 %s", expected, cfg.Server.PIDFile)
-	}
-}
-
-func TestIsValidTransformer(t *testing.T) {
-	tests := []struct {
-		name     string
-		expected bool
-	}{
-		{"openai", true},
-		{"nonexistent", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		result := IsValidTransformer(tt.name)
-		if result != tt.expected {
-			t.Errorf("IsValidTransformer(%q) = %v，期望 %v", tt.name, result, tt.expected)
-		}
 	}
 }
 
@@ -407,14 +380,12 @@ name = "provider-a"
 api_base_url = "http://a.com/v1"
 api_key = "sk-a"
 models = ["model-1", "model-2"]
-transformer = ["openai"]
 
 [[providers]]
 name = "provider-b"
 api_base_url = "http://b.com/v1"
 api_key = "sk-b"
 models = ["model-3"]
-transformer = ["openai"]
 
 [router]
 default = "provider-a,model-1"
@@ -446,7 +417,6 @@ name = "env-provider"
 api_base_url = "http://localhost:8000"
 api_key = "env:` + envVar + `"
 models = ["model-a"]
-transformer = ["openai"]
 
 [router]
 default = "env-provider,model-a"
@@ -476,7 +446,6 @@ name = "env-provider"
 api_base_url = "http://localhost:8000"
 api_key = "env:` + envVar + `"
 models = ["model-a"]
-transformer = ["openai"]
 
 [router]
 default = "env-provider,model-a"
@@ -503,7 +472,6 @@ name = "env-provider"
 api_base_url = "http://localhost:8000"
 api_key = "env:"
 models = ["model-a"]
-transformer = ["openai"]
 
 [router]
 default = "env-provider,model-a"
@@ -530,14 +498,12 @@ name = "plain-provider"
 api_base_url = "http://a.com"
 api_key = "sk-plain"
 models = ["model-a"]
-transformer = ["openai"]
 
 [[providers]]
 name = "env-provider"
 api_base_url = "http://b.com"
 api_key = "env:` + envVar + `"
 models = ["model-b"]
-transformer = ["openai"]
 
 [router]
 default = "plain-provider,model-a"

@@ -84,6 +84,17 @@ func extractUsageFromMap(usage map[string]any, provider, model string) UsageReco
 		}
 	}
 
+	// Responses API 原生 token 明细。
+	if details, ok := usage["input_tokens_details"].(map[string]any); ok {
+		if cached, ok := details["cached_tokens"].(float64); ok {
+			record.CachedTokens = int(cached)
+		}
+	}
+	if details, ok := usage["output_tokens_details"].(map[string]any); ok {
+		if reasoning, ok := details["reasoning_tokens"].(float64); ok {
+			record.OutputReasoningTokens = int(reasoning)
+		}
+	}
 	// 总 token 兜底：如果上游没返回 total_tokens，用 input + output 计算
 	if record.TotalTokens == 0 {
 		record.TotalTokens = record.InputTokens + record.OutputTokens
@@ -160,6 +171,12 @@ func extractAndRecordUsageFromChunk(data []byte, provider, model string, lastUsa
 		return
 	}
 
+	// Responses API 在 response.completed 等事件的 response 对象内携带 usage。
+	if response, ok := chunk["response"].(map[string]any); ok {
+		if usage, ok := response["usage"].(map[string]any); ok {
+			chunk["usage"] = usage
+		}
+	}
 	// OpenAI 格式：顶层 usage 对象
 	if usage, ok := chunk["usage"].(map[string]any); ok {
 		if *lastUsage == nil {

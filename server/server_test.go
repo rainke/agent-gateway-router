@@ -20,11 +20,10 @@ func newTestConfig() *config.Config {
 		},
 		Providers: []config.Provider{
 			{
-				Name:        "test",
-				APIBaseURL:  "http://localhost:1",
-				APIKey:      "sk-test",
-				Models:      []string{"m1"},
-				Transformer: []string{"openai"},
+				Name:       "test",
+				APIBaseURL: "http://localhost:1",
+				APIKey:     "sk-test",
+				Models:     []string{"m1"},
 			},
 		},
 		Router: map[string]string{
@@ -65,6 +64,15 @@ func TestModelsEndpointNotRegistered(t *testing.T) {
 func TestServer_StartAndShutdown(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.Server.Port = 19877
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/count_tokens" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"input_tokens":42}`))
+	}))
+	defer upstream.Close()
+	cfg.Providers[0].APIBaseURL = upstream.URL
 	srv := New(cfg)
 
 	// 启动服务
@@ -136,5 +144,24 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("等待 Start 返回超时")
+	}
+}
+
+func TestChatCompletionsForwarded(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer upstream.Close()
+	cfg := newTestConfig()
+	cfg.Providers[0].APIBaseURL = upstream.URL
+	srv := New(cfg)
+	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test"}`)))
+	if rec.Code != 200 || rec.Body.String() != `{"choices":[]}` {
+		t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
 	}
 }

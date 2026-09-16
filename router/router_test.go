@@ -10,18 +10,16 @@ func newTestConfig() *config.Config {
 	return &config.Config{
 		Providers: []config.Provider{
 			{
-				Name:        "provider-a",
-				APIBaseURL:  "http://a.com/v1",
-				APIKey:      "sk-a",
-				Models:      []string{"model-1", "model-2"},
-				Transformer: []string{"openai"},
+				Name:       "provider-a",
+				APIBaseURL: "http://a.com/v1",
+				APIKey:     "sk-a",
+				Models:     []string{"model-1", "model-2"},
 			},
 			{
-				Name:        "provider-b",
-				APIBaseURL:  "http://b.com/v1",
-				APIKey:      "sk-b",
-				Models:      []string{"model-3"},
-				Transformer: []string{"openai"},
+				Name:       "provider-b",
+				APIBaseURL: "http://b.com/v1",
+				APIKey:     "sk-b",
+				Models:     []string{"model-3"},
 			},
 		},
 		Router: map[string]string{

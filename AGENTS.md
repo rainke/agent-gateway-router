@@ -2,12 +2,12 @@
 
 ## Project Structure & Module Organization
 
-`agr` is a Go CLI and local HTTP gateway. The entry point is `main.go`, which delegates to Cobra commands in `cmd/`. Core packages are organized by responsibility: `config/` loads and validates TOML config, `process/` manages PID files and lifecycle signals, `server/` owns the HTTP server, `router/` resolves client models to providers, `proxy/` forwards requests, and `transformer/` adapts request/response formats. Tests live beside their packages as `*_test.go`. The default config path is `~/.agr/config.toml`; avoid committing real provider credentials.
+`agr` is a Go CLI and local HTTP gateway. The entry point is `main.go`, which delegates to Cobra commands in `cmd/`. Core packages are organized by responsibility: `config/` loads and validates TOML config, `process/` manages PID files and lifecycle signals, `server/` owns the HTTP server, `router/` resolves client models to providers, `proxy/` forwards requests and records upstream usage. Tests live beside their packages as `*_test.go`. The default config path is `~/.agr/config.toml`; avoid committing real provider credentials.
 
 ## Build, Test, and Development Commands
 
 - `go test ./...` runs the full unit test suite.
-- `go test ./transformer -run TestName` runs a focused package test.
+- `go test ./proxy -run TestPassthrough` runs a focused package test.
 - `go build -o agr .` builds the CLI binary in the repository root.
 - `go run . start` starts the gateway using `~/.agr/config.toml`.
 - `go run . start -d` starts it as a daemon.
@@ -17,30 +17,21 @@ macOS users may need `xattr -d com.apple.quarantine agr` to remove Gatekeeper qu
 
 ## Coding Style & Naming Conventions
 
-Use standard Go style: tabs from `gofmt`, short package names, exported identifiers only for public package APIs, and clear error wrapping with `%w`. Keep package boundaries small and practical; place routing logic in `router`, protocol adaptation in `transformer`, and process concerns in `process`. Run `gofmt` on changed Go files before submitting.
+Use standard Go style: tabs from `gofmt`, short package names, exported identifiers only for public package APIs, and clear error wrapping with `%w`. Keep package boundaries small and practical; place routing logic in `router`, HTTP forwarding in `proxy`, and process concerns in `process`. Run `gofmt` on changed Go files before submitting.
 
 ## Testing Guidelines
 
-Use Go’s built-in `testing` package. Add tests next to the package under test with names like `TestLoadConfig`, `TestRouteDefault`, or `TestTransformStream`. Prefer table-driven tests for config validation, routing cases, and transformer conversions. For changes touching request forwarding or streaming behavior, include both success and error-path coverage.
+Use Go’s built-in `testing` package. Add tests next to the package under test with names like `TestLoadConfig`, `TestRouteDefault`, or `TestPassthrough`. Prefer table-driven tests for config validation, routing cases, and native API forwarding. For changes touching request forwarding or streaming behavior, include both success and error-path coverage.
 
 ## Commit & Pull Request Guidelines
 
 Recent history uses Conventional Commit prefixes, for example `feat: initial commit...` and `test: add unit tests...`. Continue with `feat:`, `fix:`, `test:`, `refactor:`, or `docs:` followed by a concise imperative summary. Pull requests should describe the behavior change, list test commands run, link related issues when present, and include sample config or request/response snippets for protocol changes.
 
-## Transformer Architecture
+## Proxy Architecture
 
-The `transformer/` package uses a Chain-of-Responsibility pattern. Each provider config lists an ordered array of transformer names (e.g. `["anthropic", "openai", "deepseek"]`). `transformer.NewChain(names)` resolves them from a registry and executes them in sequence for requests (forward order) and in reverse for responses/streaming (unwind order).
+`proxy/` uses Go's `httputil.ReverseProxy` to forward Messages, Responses, Chat Completions, and Messages count_tokens requests to the routed provider's native endpoint. Only the request model is replaced; protocol fields, response bodies, status codes, and SSE events remain unchanged. Usage is observed separately with bounded buffers.
 
-**Interface** — `Transformer` has three methods: `TransformRequest`, `TransformResponse`, `TransformStream`. `CodexStreamTransformer` extends it with `TransformCodexStream` for Responses API SSE events that may map one upstream chunk to multiple downstream events.
-
-**Built-in transformers:**
-
-- `openai` — Core protocol converter. Routes by `RequestPathKey` in context: `/v1/messages` → Anthropic Messages ↔ OpenAI Chat Completions, `/v1/responses` → OpenAI Responses ↔ Chat Completions, other paths → passthrough.
-- `deepseek` — DeepSeek thinking 模式控制。按 `reasoning_effort` 决定是否禁用 thinking：空或 `none` 时注入 `thinking: {disabled}`，`low`/`medium`/`high` 时保留，`xhigh` 映射为 `max`。Claude Messages 请求直接跳过（由 `openai` 转换器处理 thinking ↔ reasoning_content 映射）。
-- `anthropic` — Blocks Codex (Responses API) requests with an error; passes Claude (Messages API) requests through. Use it on providers that only serve Anthropic clients.
-- `openai-responses` — The inverse: blocks Claude (Messages API) requests; passes Codex (Responses API) requests through. Use it on providers that only serve Codex clients.
-
-**Adding a new transformer** — Create a struct in `transformer/` implementing the `Transformer` interface, register its factory in `registry` (`transformer.go`), and add its name to `IsValidTransformer` (`config/config.go`). If it produces multiple SSE events per chunk, also implement `CodexStreamTransformer`.
+`api_base_url` accepts a host or API path prefix such as `/v1`. Legacy full endpoint URLs are normalized to the requested endpoint. Legacy `transformer` configuration is ignored. Do not add protocol conversion, synthetic SSE events, provider-specific reasoning changes, or local token estimation.
 
 ## Security & Configuration Tips
 
