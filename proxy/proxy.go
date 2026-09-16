@@ -85,6 +85,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		return
 	}
 	slog.Info("代理请求", "path", path, "provider", result.Provider.Name, "model", result.Model)
+	logRequestParameters(body, path, result.Provider.Name, result.Model)
 	reverse := &httputil.ReverseProxy{
 		Transport:     p.transport,
 		FlushInterval: -1,
@@ -98,6 +99,8 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 			pr.Out.Body = io.NopCloser(bytes.NewReader(body))
 			pr.Out.ContentLength = int64(len(body))
 			pr.Out.Header.Del("Content-Length")
+			// 请求未压缩响应，便于旁路读取 SSE / JSON usage。
+			pr.Out.Header.Set("Accept-Encoding", "identity")
 			if key := result.Provider.APIKey; key != "" {
 				pr.Out.Header.Set("Authorization", "Bearer "+key)
 				if pr.In.Header.Get("X-Api-Key") != "" || strings.HasPrefix(path, "/v1/messages") {
@@ -107,13 +110,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		},
 
 		ModifyResponse: func(resp *http.Response) error {
+			contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+			encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+			slog.Debug("上游响应", "provider", result.Provider.Name, "model", result.Model, "path", path,
+				"status", resp.StatusCode, "content_type", resp.Header.Get("Content-Type"), "content_encoding", encoding)
+
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				slog.Warn("上游返回非正常状态", "provider", result.Provider.Name, "path", path, "status", resp.StatusCode)
-			} else if path != "/v1/messages/count_tokens" && resp.Header.Get("Content-Encoding") == "" {
-				contentType := resp.Header.Get("Content-Type")
+			} else if path != "/v1/messages/count_tokens" {
+				if encoding != "" && encoding != "identity" {
+					slog.Warn("跳过 usage 统计", "provider", result.Provider.Name, "model", result.Model, "reason", "compressed_response", "content_encoding", encoding)
+					return nil
+				}
 				stream := strings.Contains(contentType, "text/event-stream") || strings.Contains(contentType, "text/stream")
 				if stream || strings.Contains(contentType, "json") {
 					resp.Body = &usageObserver{ReadCloser: resp.Body, provider: result.Provider.Name, model: result.Model, stream: stream}
+				} else {
+					slog.Warn("跳过 usage 统计", "provider", result.Provider.Name, "model", result.Model, "reason", "unsupported_content_type", "content_type", contentType)
 				}
 			}
 			return nil

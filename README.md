@@ -29,7 +29,7 @@
 - **原生 API 代理** — Messages、Responses、Chat Completions 和 Messages count_tokens
 - **模型路由** — 通过 `<provider>/<model>` 选择提供商和模型
 - **流式传输** — 保留 SSE 的 event、data、id、注释和结束事件，客户端断开时取消上游请求
-- **用量统计** — 旁路读取原生 JSON / SSE usage，不修改响应；压缩响应及超过统计缓冲上限（4 MiB）的响应或事件跳过统计
+- **用量统计** — 旁路读取原生 JSON / SSE usage，不修改响应；向上游请求 `Accept-Encoding: identity` 以读取 usage；上游仍返回压缩响应或超过统计缓冲上限（4 MiB）的响应或事件时跳过统计
 - **守护进程管理** — `start`/`stop`/`restart`，PID 管理和优雅停机
 - **TOML 配置** — 校验提供商配置，支持环境变量凭据
 
@@ -518,6 +518,14 @@ agr start -p 8080
 **Q: 如何查看详细日志？**
 
 在配置文件中将 `log_level` 改为 `"debug"`，重启服务。日志记录路由和上游状态，不记录请求或响应正文。
+
+`debug` 级别会记录「代理请求参数」：直接打印原始请求体（`body`），实际转发模型单独记录。
+
+`debug` 日志还记录上游响应状态、Content-Type 和 Content-Encoding。网关向上游发送 `Accept-Encoding: identity`，避免 Copilot 等客户端接受压缩时导致 usage 无法读取；若上游仍返回压缩内容，保持原样转发，并以 `warn` 日志记录统计跳过原因。
+
+流式响应结束时，`info` 日志会记录 provider、model、接收字节数、SSE 数据事件数、跳过的超限事件数、是否存在未完成事件、是否收到 usage，以及各项 token 统计。`reason=eof` 表示响应体读取结束，`read_error` 表示读取出错，`closed` 表示读取结束前响应体被关闭；EOF 本身不代表模型生成成功。`usage_found=false` 表示未提取到上游 usage，token 字段为 0 不代表实际没有消耗。
+
+`debug` 级别另外逐条记录 SSE 数据事件的序号、类型、大小和截至该事件是否已收到 usage；事件类型使用固定列表，未知类型记为 `unknown`，不输出原始流式正文。日志仍写入 `~/.agr/logs/<日期>.log`，用量统计写入 `~/.agr/usage/<日期>.jsonl`。
 
 **Q: Claude Code 连不上网关？**
 
