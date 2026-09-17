@@ -2,3 +2,4 @@ config.toml
 agr
 .traces
 .DS_Store
+.agents

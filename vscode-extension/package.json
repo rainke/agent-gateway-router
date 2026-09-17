@@ -1,0 +1,58 @@
+{
+  "name": "agr-model-provider",
+  "displayName": "agr Model Provider",
+  "description": "Use models from your agr gateway in VS Code Chat.",
+  "version": "0.1.0",
+  "publisher": "rainke",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/rainke/agent-gateway-router", "directory": "vscode-extension" },
+  "engines": { "vscode": "^1.104.0" },
+  "categories": ["AI", "Chat"],
+  "extensionKind": ["ui"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onLanguageModelChatProvider:agr"],
+  "contributes": {
+    "languageModelChatProviders": [{ "vendor": "agr", "displayName": "agr", "managementCommand": "agr.configure" }],
+    "commands": [
+      { "command": "agr.configure", "title": "agr: Configure Gateway" },
+      { "command": "agr.refreshModels", "title": "agr: Refresh Models" }
+    ],
+    "configuration": {
+      "title": "agr",
+      "properties": {
+        "agr.baseUrl": { "type": "string", "default": "http://localhost:9999", "scope": "application", "description": "Gateway URL (with or without /v1). Upstream credentials remain in agr." },
+        "agr.models": {
+          "type": "object", "default": {}, "scope": "application",
+          "description": "Overrides keyed by the exact provider/model ID from /v1/models. Token limits are input/output budgets, not inferred model capabilities.",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "api": { "type": "string", "enum": ["chat-completions", "messages", "responses"], "default": "chat-completions" },
+              "maxInputTokens": { "type": "integer", "minimum": 1, "default": 32768 },
+              "maxOutputTokens": { "type": "integer", "minimum": 1, "default": 4096 },
+              "toolCalling": { "type": "boolean", "default": true },
+              "enabled": { "type": "boolean", "default": true }
+            }
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "test": "vitest run --coverage",
+    "test:host": "npm run compile && node test/run-host.cjs",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --out agr-model-provider.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.104.0",
+    "@vitest/coverage-v8": "^3.2.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

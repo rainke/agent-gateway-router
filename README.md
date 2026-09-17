@@ -215,6 +215,21 @@ agr 在启动时执行严格校验，以下情况会直接报错退出：
 
 ## 客户端集成
 
+### VS Code Model Provider 插件
+
+仓库内的 [`vscode-extension/`](vscode-extension/) 可将 `GET /v1/models` 返回的模型加入 VS Code Chat 模型选择器，支持文本流式响应、工具调用及取消请求。需要 VS Code 1.104+。
+
+```bash
+cd vscode-extension
+npm ci
+npm run package
+code --install-extension agr-model-provider.vsix
+```
+
+默认连接 `http://localhost:9999`，使用 Chat Completions；通过用户设置 `agr.models` 为各模型选择 `messages` 或 `responses` 协议。运行 **agr: Configure Gateway** 配置，或 **agr: Refresh Models** 刷新模型列表。
+
+**计数兼容性：** VS Code 要求 token 计数，插件使用同一模型路由的 `/v1/messages/count_tokens`，不做本地估算。上游必须支持该接口，才能完整使用上下文预算功能。配置示例、推理模型限制与开发说明见[插件文档](vscode-extension/README.md)。
+
 ### Claude Code 配置
 
 编辑 `~/.claude/settings.json`：
