@@ -97,7 +97,12 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		p.writeError(w, http.StatusBadRequest, "序列化请求体失败: "+err.Error())
 		return
 	}
-	target, err := upstreamURL(result.Provider.APIBaseURL, req.Path)
+	baseURL := result.Provider.APIBaseURL
+	// 按入口协议选择地址；adaptor 仍可改写最终发送的路径。
+	if (path == "/v1/messages" || path == "/v1/messages/count_tokens") && result.Provider.AnthropicBaseURL != "" {
+		baseURL = result.Provider.AnthropicBaseURL
+	}
+	target, err := upstreamURL(baseURL, req.Path)
 	if err != nil {
 		p.writeError(w, http.StatusBadGateway, "上游地址无效: "+err.Error())
 		return

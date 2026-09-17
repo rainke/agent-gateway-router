@@ -12,7 +12,7 @@ import (
 
 // Request 是适配器链共享的可变请求。Body 只解析一次，保留原始 JSON 值。
 // Headers 使用 map[string][]string 保留多值头；Path 是不含查询串的 API 路径，
-// 相对于提供商的 APIBaseURL。RawQuery 保留原始查询串编码。
+// 相对于入口协议选中的上游基础地址。RawQuery 保留原始查询串编码。
 type Request struct {
 	Body     map[string]json.RawMessage
 	Headers  http.Header

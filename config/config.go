@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,10 +27,12 @@ type ServerConfig struct {
 
 // Provider 上游供应商配置
 type Provider struct {
-	Name       string   `mapstructure:"name"`
-	APIBaseURL string   `mapstructure:"api_base_url"`
-	APIKey     string   `mapstructure:"api_key"`
-	Models     []string `mapstructure:"models"`
+	Name       string `mapstructure:"name"`
+	APIBaseURL string `mapstructure:"api_base_url"`
+	// AnthropicBaseURL 可选，覆盖 Messages 和 count_tokens 的上游基础地址。
+	AnthropicBaseURL string   `mapstructure:"anthropic_base_url"`
+	APIKey           string   `mapstructure:"api_key"`
+	Models           []string `mapstructure:"models"`
 	// Adaptors 启用的请求适配器名称列表，例如 ["minimax"]。
 	Adaptors []string `mapstructure:"adaptors"`
 }
@@ -103,6 +106,12 @@ func validate(cfg *Config) error {
 		}
 		if _, exists := providerMap[p.Name]; exists {
 			return fmt.Errorf("配置错误: providers.name 重复: %s", p.Name)
+		}
+		if p.AnthropicBaseURL != "" {
+			u, err := url.Parse(p.AnthropicBaseURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+				return fmt.Errorf("配置错误: provider %s 的 anthropic_base_url 必须是有效的 HTTP(S) 地址", p.Name)
+			}
 		}
 		for _, name := range p.Adaptors {
 			if !adaptor.Known(name) {
