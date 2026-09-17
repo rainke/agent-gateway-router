@@ -90,8 +90,9 @@ pid_file = "~/.agr/agr.pid"
 [[providers]]
 name = "deepseek"
 api_base_url = "https://api.deepseek.com/v1"
+anthropic_base_url = "https://api.deepseek.com/anthropic"
 api_key = "sk-your-key-here"
-models = ["deepseek-chat"]
+models = ["deepseek-flash"]
 ```
 
 ### 2. 启动网关
@@ -140,12 +141,13 @@ api_base_url = "https://api.zhipu.example.com/v1"
 api_key = "your-zhipu-key"
 models = ["glm-5-oc"]
 
-# 提供商 2：DeepSeek（需要 thinking 映射）
+# 提供商 2：DeepSeek（OpenAI 与 Anthropic 使用不同基础地址）
 [[providers]]
 name = "deepseek"
 api_base_url = "https://api.deepseek.com/v1"
+anthropic_base_url = "https://api.deepseek.com/anthropic"
 api_key = "sk-your-deepseek-key"
-models = ["deepseek-chat"]
+models = ["deepseek-flash"]
 
 # 提供商 3：Mimo（OpenAI 兼容接口）
 [[providers]]
@@ -193,7 +195,8 @@ adaptors = ["minimax"]
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | string | 提供商唯一名称，不能包含 `/`，作为对外模型名前缀 |
-| `api_base_url` | string | 上游 API 基础地址（主机或带路径前缀） |
+| `api_base_url` | string | 默认上游 API 基础地址（主机或带路径前缀） |
+| `anthropic_base_url` | string | 可选。Messages 和 count_tokens 的上游基础地址；未配置或为空时使用 `api_base_url` |
 | `api_key` | string | 上游 API 密钥；支持 `"env:VAR_NAME"` 形式从环境变量读取 |
 | `models` | []string | 该提供商支持的模型列表 |
 | `adaptors` | []string | 可选。启用的请求适配器，如 `["minimax"]`；未知名启动报错 |
@@ -211,6 +214,7 @@ agr 在启动时执行严格校验，以下情况会直接报错退出：
 
 - `providers.name` 重复
 - `providers.name` 为空或包含 `/`
+- 非空的 `anthropic_base_url` 不是有效的 HTTP(S) 地址
 - 端口号不合法
 
 ## 客户端集成
@@ -348,19 +352,42 @@ codex -p agr
 
 ## 代理行为与配置迁移
 
-`api_base_url` 配置上游 API 基础地址，例如 `https://gateway.example.com/v1`。
-同一提供商可处理所有已注册的 API 格式，agr 按请求路径选择端点：
+`api_base_url` 配置默认上游 API 基础地址，例如 `https://gateway.example.com/v1`。
+同一提供商可通过 `anthropic_base_url` 单独指定 Anthropic 兼容接口的地址：
+
+| 客户端路径 | 基础地址选择 |
+| --- | --- |
+| `/v1/chat/completions`、`/v1/responses` | `api_base_url` |
+| `/v1/messages`、`/v1/messages/count_tokens` | 优先 `anthropic_base_url`，未配置或为空时使用 `api_base_url` |
+
+两个地址共用提供商的 `api_key` 和 `models`。例如：
+
+```toml
+[[providers]]
+name = "deepseek"
+api_base_url = "https://api.deepseek.com"
+anthropic_base_url = "https://api.deepseek.com/anthropic"
+api_key = "env:DEEPSEEK_API_KEY"
+models = ["deepseek-flash"]
+```
+
+客户端使用 `deepseek/deepseek-flash`。其 `/v1/messages/count_tokens` 请求会转发到
+`https://api.deepseek.com/anthropic/v1/messages/count_tokens`；Chat Completions 和 Responses 使用默认地址。
+地址选择以原始入口协议为准，adaptor 仍可改写最终发送的路径。
+
+选定基础地址后，agr 按以下规则拼接端点；两个配置字段使用相同规则：
 
 | 配置地址 | 客户端路径 | 上游路径 |
 | --- | --- | --- |
 | `https://gateway.example.com` | `/v1/messages` | `/v1/messages` |
 | `https://gateway.example.com/v1` | `/v1/responses` | `/v1/responses` |
+| `https://gateway.example.com/anthropic` | `/v1/messages/count_tokens` | `/anthropic/v1/messages/count_tokens` |
 | `https://gateway.example.com/anthropic/v1` | `/v1/messages/count_tokens` | `/anthropic/v1/messages/count_tokens` |
 
 旧配置的 `transformer` 字段会被忽略，可以直接删除。旧的完整端点地址也兼容：
 `/v1/chat/completions`、`/v1/messages`、`/v1/responses` 的末尾端点会按客户端路径替换；
 无 `/v1` 的完整端点（例如 `/chat/completions`）继续使用无版本前缀的路径（例如 `/responses`）。
-若各协议使用不同前缀，请按实际上游地址配置提供商和模型路由。
+若各协议使用不同前缀，可配置 `anthropic_base_url`；若还需不同密钥或模型列表，则分别配置提供商。
 
 不再执行 thinking 映射、reasoning_effort 调整、协议限制或本地 token 估算。
 `count_tokens` 始终使用模型路由选中的提供商，上游不支持时原样返回其错误。
