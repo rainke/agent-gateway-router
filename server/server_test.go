@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agr/config"
+	"agr/router"
 )
 
 func newTestConfig() *config.Config {
@@ -41,20 +42,51 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestModelsEndpointNotRegistered(t *testing.T) {
-	cfg := newTestConfig()
-	srv := New(cfg)
-
-	req, err := http.NewRequest(http.MethodGet, "/v1/models", nil)
-	if err != nil {
-		t.Fatalf("创建 models 请求失败: %v", err)
+func TestModelsEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		providers []config.Provider
+		want      string
+	}{
+		{"configured", []config.Provider{
+			{Name: "first", APIKey: "secret", APIBaseURL: "http://localhost:1", Models: []string{"shared", "org/model", "shared", ""}},
+			{Name: "second", Models: []string{"shared"}},
+			{Name: "empty"},
+		}, `{"object":"list","data":[{"id":"first/shared","object":"model","created":0,"owned_by":"first"},{"id":"first/org/model","object":"model","created":0,"owned_by":"first"},{"id":"second/shared","object":"model","created":0,"owned_by":"second"}]}`},
+		{"no providers", nil, `{"object":"list","data":[]}`},
+		{"no models", []config.Provider{{Name: "empty"}}, `{"object":"list","data":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newTestConfig()
+			cfg.Providers = tc.providers
+			srv := New(cfg)
+			rec := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get("Content-Type"); got != "application/json" {
+				t.Errorf("Content-Type = %q", got)
+			}
+			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
+				t.Errorf("body = %s, want %s", got, tc.want)
+			}
+		})
 	}
-	rec := httptest.NewRecorder()
+}
 
-	srv.httpServer.Handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("/v1/models 状态码期望 404，实际 %d", rec.Code)
+func TestModelsEndpointMethodNotAllowed(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			New(newTestConfig()).httpServer.Handler.ServeHTTP(rec, httptest.NewRequest(method, "/v1/models", nil))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want 405", rec.Code)
+			}
+			if !strings.Contains(rec.Header().Get("Allow"), "GET") {
+				t.Errorf("Allow = %q", rec.Header().Get("Allow"))
+			}
+		})
 	}
 }
 
@@ -160,5 +192,42 @@ func TestChatCompletionsForwarded(t *testing.T) {
 	srv.httpServer.Handler.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test/m1"}`)))
 	if rec.Code != 200 || rec.Body.String() != `{"choices":[]}` {
 		t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestModelsEndpointHTTP(t *testing.T) {
+	cfg := newTestConfig()
+	srv := httptest.NewServer(New(cfg).httpServer.Handler)
+	defer srv.Close()
+	resp, err := srv.Client().Get(srv.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Data) != 1 {
+		t.Fatalf("models = %+v", list.Data)
+	}
+	route, err := router.New(cfg).Route(list.Data[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.Provider.Name != "test" || route.Model != "m1" {
+		t.Fatalf("route = %+v", route)
+	}
+	head, err := srv.Client().Head(srv.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer head.Body.Close()
+	if head.StatusCode != http.StatusOK || head.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("HEAD response = %+v", head)
 	}
 }

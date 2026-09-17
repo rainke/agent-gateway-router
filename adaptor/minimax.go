@@ -1,6 +1,8 @@
 package adaptor
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 func init() {
 	Register("minimax", minimax{})

@@ -24,6 +24,7 @@ func New(cfg *config.Config) *Server {
 	p := proxy.New(cfg, r)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/models", modelsHandler(cfg))
 
 	// 原生 API 代理端点
 	mux.HandleFunc("/v1/messages", p.HandleMessages)

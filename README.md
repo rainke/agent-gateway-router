@@ -28,6 +28,7 @@
 ## 功能特性
 
 - **原生 API 代理** — Messages、Responses、Chat Completions 和 Messages count_tokens
+- **模型发现** — `GET /v1/models` 返回配置中的模型列表，模型 ID 使用 `<provider>/<model>`
 - **模型路由** — 通过 `<provider>/<model>` 选择提供商和模型
 - **提供商适配器** — 通过 `adaptors = ["minimax"]` 按配置启用；MiniMax 对 `/v1/chat/completions` 缺省注入 `reasoning_split: true`，将 thinking 拆到 `reasoning_content` / `reasoning_details`（客户端已设置时保持原值）
 - **流式传输** — 保留 SSE 的 event、data、id、注释和结束事件，客户端断开时取消上游请求
@@ -272,7 +273,7 @@ codex -p agr
 
 ### Codex 模型元数据（model_catalog_json）
 
-agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数据应通过 Codex 自己的 `model_catalog_json` 配置加载。`model_catalog_json` 是 Codex 配置中的 JSON 模型目录路径，推荐在 `~/.codex/agr.config.toml` 这个 agr profile 中配置，这样只在 `codex -p agr` 时生效。
+`GET /v1/models` 提供配置中的模型 ID 列表；Codex 的模型能力元数据应通过 Codex 自己的 `model_catalog_json` 配置加载。`model_catalog_json` 是 Codex 配置中的 JSON 模型目录路径，推荐在 `~/.codex/agr.config.toml` 这个 agr profile 中配置，这样只在 `codex -p agr` 时生效。
 
 创建 `~/.codex/agr-model-catalog.json`：
 
@@ -367,12 +368,38 @@ HTTP 逐跳头由反向代理移除。上游重定向直接返回客户端。
 
 ## API 端点
 
+### 获取模型列表
+
+```bash
+curl http://localhost:9999/v1/models
+```
+
+接口按配置顺序返回所有提供商的模型，同一提供商下的重复模型仅返回一次，空模型名跳过。数据来自启动时加载的配置，不请求上游；修改配置后需重启服务。
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "deepseek/deepseek-chat",
+      "object": "model",
+      "created": 0,
+      "owned_by": "deepseek"
+    }
+  ]
+}
+```
+
+`id` 可直接用于请求的 `model` 字段；`created` 为 `0`，表示未提供模型创建时间。没有配置模型时返回 `data: []`。支持 `GET` 和 `HEAD`，其他方法返回 `405`。
+
+
 | 端点 | 协议 | 目标客户端 | 状态 |
 |------|------|-----------|------|
 | `/v1/messages` | Anthropic Messages API | Claude Code | ✅ 已实现 |
 | `/v1/responses` | OpenAI Responses API | Codex | ✅ 已实现 |
 | `/v1/chat/completions` | OpenAI Chat Completions | OpenAI 兼容客户端 | ✅ 已实现 |
 | `/v1/messages/count_tokens` | Anthropic token 计数 | Claude Code | ✅ 上游转发 |
+| `/v1/models` | OpenAI 风格模型列表 | 模型发现 | ✅ 已实现 |
 | `/health` | — | 健康检查 | ✅ 已实现 |
 
 > **VS Code Copilot 集成**：VS Code 1.122+ 原生支持自定义 OpenAI 兼容端点，无需 Ollama 协议伪装。在 VS Code 设置中配置 `chat.agent.customEndpoint` 指向 `http://localhost:9999` 即可。
