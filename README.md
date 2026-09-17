@@ -14,20 +14,22 @@
 ## 架构总览
 
 ```text
-客户端 → 模型路由 → HTTP 代理 → 上游原生 API
+客户端 → 模型路由 → 提供商适配 → HTTP 代理 → 上游原生 API
                        ↑              │
                        └── 原样响应 ──┘
 ```
 
 1. 从请求体读取 `model`，按配置选择提供商与上游模型。
-2. 仅替换请求的 `model` 字段，保留 tools、thinking、reasoning 等协议字段。
-3. 将请求发往上游对应端点，携带协议头和提供商凭据。
-4. 透传响应体、状态码、响应头及 trailer；SSE 实时转发，不重建事件。
+2. 将请求体解析为 map，仅替换 `model` 字段，保留 tools、thinking、reasoning 等协议字段。
+3. 将 body map、headers、path、method、query 封装为同一请求对象，按提供商 `adaptors` 配置执行请求适配（当前支持 `minimax`）。
+4. 序列化后发往上游对应端点，携带协议头和提供商凭据。
+5. 透传响应体、状态码、响应头及 trailer；SSE 实时转发，不重建事件。
 
 ## 功能特性
 
 - **原生 API 代理** — Messages、Responses、Chat Completions 和 Messages count_tokens
 - **模型路由** — 通过 `<provider>/<model>` 选择提供商和模型
+- **提供商适配器** — 通过 `adaptors = ["minimax"]` 按配置启用；MiniMax 对 `/v1/chat/completions` 缺省注入 `reasoning_split: true`，将 thinking 拆到 `reasoning_content` / `reasoning_details`（客户端已设置时保持原值）
 - **流式传输** — 保留 SSE 的 event、data、id、注释和结束事件，客户端断开时取消上游请求
 - **用量统计** — 旁路读取原生 JSON / SSE usage，不修改响应；向上游请求 `Accept-Encoding: identity` 以读取 usage；上游仍返回压缩响应或超过统计缓冲上限（4 MiB）的响应或事件时跳过统计
 - **守护进程管理** — `start`/`stop`/`restart`，PID 管理和优雅停机
@@ -165,6 +167,14 @@ api_base_url = "https://api.freemodel.example.com/v1"
 api_key = "your-freemodel-key"
 models = ["gpt-5.5", "gpt-5.3-codex"]
 
+# 提供商 6：MiniMax（chat/completions 自动注入 reasoning_split=true）
+[[providers]]
+name = "minimax"
+api_base_url = "https://api.minimax.cn/v1"
+api_key = "your-minimax-key"
+models = ["MiniMax-M3", "MiniMax-M2.5"]
+adaptors = ["minimax"]
+
 ```
 
 ### 配置字段说明
@@ -185,6 +195,7 @@ models = ["gpt-5.5", "gpt-5.3-codex"]
 | `api_base_url` | string | 上游 API 基础地址（主机或带路径前缀） |
 | `api_key` | string | 上游 API 密钥；支持 `"env:VAR_NAME"` 形式从环境变量读取 |
 | `models` | []string | 该提供商支持的模型列表 |
+| `adaptors` | []string | 可选。启用的请求适配器，如 `["minimax"]`；未知名启动报错 |
 
 #### 对外模型名
 
@@ -337,7 +348,19 @@ agr 不再提供 `/v1/models` 模型发现接口；Codex 的模型能力元数�
 
 不再执行 thinking 映射、reasoning_effort 调整、协议限制或本地 token 估算。
 `count_tokens` 始终使用模型路由选中的提供商，上游不支持时原样返回其错误。
-请求只改写路由模型名；未知字段和大整数保持原值，JSON 的空白和键顺序可能重新序列化。
+请求只改写路由模型名与已配置的 adaptor 字段；未知字段和大整数以 RawMessage 保留。
+入口将请求体解析为 `map[string]json.RawMessage` 后，封装为 `adaptor.Request`。
+适配器接口为 `Apply(req *Request) error`，只接收一个请求对象，其中包含 `Body`、
+`Headers`（`http.Header`，即多值 map）、`Path`、`Method` 和 `RawQuery`。
+模型替换与各层 adaptor 共用该请求，按配置顺序原地修改；代理转发修改后的请求信息，
+请求体结束时再序列化一次，避免每层各自 Unmarshal/Marshal 大请求体。
+`Path` 为相对于提供商 API 基础地址的端点路径，`RawQuery` 为原始编码的查询串。
+提供商凭据、Content-Length 和逐跳头仍由代理统一处理。
+唯一例外是提供商适配器：provider 配置了 `adaptors = ["minimax"]` 时，
+`/v1/chat/completions` 请求若未设置 `reasoning_split`，会注入 `reasoning_split: true`，
+使上游把 thinking 内容拆分到 `reasoning_content` / `reasoning_details` 字段；
+客户端已显式设置该字段时保持原值，其他端点与其他未配置 adaptors 的提供商完全不动。
+未知 adaptor 名称会在启动校验时直接报错。
 请求中的查询参数、协议头会保留；配置 `api_key` 时替换 Authorization，
 Messages 请求及原本带有 `x-api-key` 的请求同时使用提供商的 `x-api-key`。
 HTTP 逐跳头由反向代理移除。上游重定向直接返回客户端。
@@ -441,6 +464,7 @@ agr/
 ├── config/                  # TOML 配置加载与校验
 ├── server/                  # HTTP 服务器
 ├── router/                  # 模型 → 提供商路由
+├── adaptor/                 # 提供商请求适配器（minimax 等）
 ├── proxy/                   # 请求转发与 SSE 流式传输
 ├── process/                 # PID 文件与进程信号管理
 ├── version/                 # 版本信息

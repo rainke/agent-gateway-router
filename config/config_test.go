@@ -258,6 +258,70 @@ models = ["m1"]
 	}
 }
 
+func TestLoad_Adaptors(t *testing.T) {
+	content := `
+[server]
+port = 8080
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "minimax"
+api_base_url = "https://api.minimax.cn/v1"
+api_key = "sk-mm"
+models = ["MiniMax-M3"]
+adaptors = ["minimax"]
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("带 adaptors 的配置应加载成功: %v", err)
+	}
+	if len(cfg.Providers[0].Adaptors) != 1 || cfg.Providers[0].Adaptors[0] != "minimax" {
+		t.Errorf("Adaptors = %v, want [minimax]", cfg.Providers[0].Adaptors)
+	}
+}
+
+func TestLoad_UnknownAdaptor(t *testing.T) {
+	content := `
+[server]
+port = 8080
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "p1"
+models = ["m1"]
+adaptors = ["does-not-exist"]
+`
+	path := writeTempConfig(t, content)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("期望未知 adaptor 时报错")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("错误应包含未知名称，实际: %v", err)
+	}
+}
+
+func TestLoad_EmptyAdaptors(t *testing.T) {
+	content := `
+[server]
+port = 8080
+pid_file = "/tmp/test.pid"
+
+[[providers]]
+name = "p1"
+models = ["m1"]
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Providers[0].Adaptors) != 0 {
+		t.Errorf("Adaptors = %v, want empty", cfg.Providers[0].Adaptors)
+	}
+}
+
 func TestLoad_ExpandTildePath(t *testing.T) {
 	content := `
 [server]

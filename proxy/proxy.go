@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"agr/adaptor"
 	"agr/config"
 	"agr/router"
 )
@@ -57,12 +58,19 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		return
 	}
 	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
+	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		p.writeError(w, http.StatusBadRequest, "读取请求体失败: "+err.Error())
 		return
 	}
-	clientModel, err := extractModel(body, path)
+	// 请求体只解析一次；模型替换与各层 adaptor 共用同一 req，结束时再序列化。
+	payload, err := parseRequestBody(raw)
+	if err != nil {
+		p.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req := &adaptor.Request{Body: payload, Headers: r.Header.Clone(), Path: path, Method: r.Method, RawQuery: r.URL.RawQuery}
+	clientModel, err := extractModel(req.Body)
 	if err != nil {
 		p.writeError(w, http.StatusBadRequest, "提取模型名失败: "+err.Error())
 		return
@@ -73,13 +81,23 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 		return
 	}
 	if clientModel != result.Model {
-		body, err = replaceModelInBody(body, result.Model)
-		if err != nil {
-			p.writeError(w, http.StatusBadRequest, "替换模型名失败: "+err.Error())
+		encoded, mErr := json.Marshal(result.Model)
+		if mErr != nil {
+			p.writeError(w, http.StatusBadRequest, "替换模型名失败: "+mErr.Error())
 			return
 		}
+		req.Body["model"] = encoded
 	}
-	target, err := upstreamURL(result.Provider.APIBaseURL, path)
+	if err := adaptor.Apply(req, result.Provider.Adaptors); err != nil {
+		p.writeError(w, http.StatusBadRequest, "适配请求失败: "+err.Error())
+		return
+	}
+	body, err := json.Marshal(req.Body)
+	if err != nil {
+		p.writeError(w, http.StatusBadRequest, "序列化请求体失败: "+err.Error())
+		return
+	}
+	target, err := upstreamURL(result.Provider.APIBaseURL, req.Path)
 	if err != nil {
 		p.writeError(w, http.StatusBadGateway, "上游地址无效: "+err.Error())
 		return
@@ -103,7 +121,7 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 			pr.Out.Header.Set("Accept-Encoding", "identity")
 			if key := result.Provider.APIKey; key != "" {
 				pr.Out.Header.Set("Authorization", "Bearer "+key)
-				if pr.In.Header.Get("X-Api-Key") != "" || strings.HasPrefix(path, "/v1/messages") {
+				if pr.In.Header.Get("X-Api-Key") != "" || strings.HasPrefix(req.Path, "/v1/messages") {
 					pr.Out.Header.Set("X-Api-Key", key)
 				}
 			}
@@ -136,7 +154,12 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request, path string)
 			p.writeError(w, http.StatusBadGateway, "请求上游失败")
 		},
 	}
-	reverse.ServeHTTP(w, r)
+	// 在 ReverseProxy 清理逐跳头之前传入适配后的请求头，避免重新引入逐跳头。
+	forward := r.Clone(r.Context())
+	forward.Header = req.Headers.Clone()
+	forward.Method = req.Method
+	forward.URL.RawQuery = req.RawQuery
+	reverse.ServeHTTP(w, forward)
 }
 
 // upstreamURL 支持主机地址、版本前缀及旧配置中的完整端点地址。
@@ -166,24 +189,19 @@ func upstreamURL(base, path string) (*url.URL, error) {
 	return target, nil
 }
 
-// 使用 RawMessage 保留未知字段和大整数，模型名之外不调整协议字段。
-func replaceModelInBody(body []byte, model string) ([]byte, error) {
+// parseRequestBody 解析 JSON 对象请求体。值保留为 RawMessage，大整数与未知字段不丢失。
+func parseRequestBody(body []byte) (map[string]json.RawMessage, error) {
 	var req map[string]json.RawMessage
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("解析请求体 JSON 失败: %w", err)
 	}
 	if req == nil {
 		return nil, fmt.Errorf("请求体必须是 JSON 对象")
 	}
-	req["model"], _ = json.Marshal(model)
-	return json.Marshal(req)
+	return req, nil
 }
 
-func extractModel(body []byte, path string) (string, error) {
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(body, &req); err != nil {
-		return "", fmt.Errorf("解析请求体 JSON 失败: %w", err)
-	}
+func extractModel(req map[string]json.RawMessage) (string, error) {
 	var model string
 	if err := json.Unmarshal(req["model"], &model); err != nil || model == "" {
 		return "", fmt.Errorf("请求体中需要非空字符串 model 字段")

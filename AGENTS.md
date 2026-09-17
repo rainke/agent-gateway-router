@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`agr` is a Go CLI and local HTTP gateway. The entry point is `main.go`, which delegates to Cobra commands in `cmd/`. Core packages are organized by responsibility: `config/` loads and validates TOML config, `process/` manages PID files and lifecycle signals, `server/` owns the HTTP server, `router/` resolves client models to providers, `proxy/` forwards requests and records upstream usage. Tests live beside their packages as `*_test.go`. The default config path is `~/.agr/config.toml`; avoid committing real provider credentials.
+`agr` is a Go CLI and local HTTP gateway. The entry point is `main.go`, which delegates to Cobra commands in `cmd/`. Core packages are organized by responsibility: `config/` loads and validates TOML config, `process/` manages PID files and lifecycle signals, `server/` owns the HTTP server, `router/` resolves client models to providers, `adaptor/` applies optional provider-specific request rewrites, `proxy/` forwards requests and records upstream usage. Tests live beside their packages as `*_test.go`. The default config path is `~/.agr/config.toml`; avoid committing real provider credentials.
 
 ## Build, Test, and Development Commands
 
@@ -17,7 +17,7 @@ macOS users may need `xattr -d com.apple.quarantine agr` to remove Gatekeeper qu
 
 ## Coding Style & Naming Conventions
 
-Use standard Go style: tabs from `gofmt`, short package names, exported identifiers only for public package APIs, and clear error wrapping with `%w`. Keep package boundaries small and practical; place routing logic in `router`, HTTP forwarding in `proxy`, and process concerns in `process`. Run `gofmt` on changed Go files before submitting.
+Use standard Go style: tabs from `gofmt`, short package names, exported identifiers only for public package APIs, and clear error wrapping with `%w`. Keep package boundaries small and practical; place routing logic in `router`, HTTP forwarding in `proxy`, request body adaptations in `adaptor`, and process concerns in `process`. Run `gofmt` on changed Go files before submitting.
 
 ## Testing Guidelines
 
@@ -30,6 +30,8 @@ Recent history uses Conventional Commit prefixes, for example `feat: initial com
 ## Proxy Architecture
 
 `proxy/` uses Go's `httputil.ReverseProxy` to forward Messages, Responses, Chat Completions, and Messages count_tokens requests to the routed provider's native endpoint. Only the request model is replaced; protocol fields, response bodies, status codes, and SSE events remain unchanged. Usage is observed separately with bounded buffers.
+
+Provider-specific request adaptors live in `adaptor/` and are enabled per provider via `adaptors = ["minimax"]` in config. The proxy parses the request body once into `map[string]json.RawMessage`, wraps it in a shared `adaptor.Request` with `Body`, `Headers` (`http.Header`), `Path`, `Method`, and `RawQuery`, and applies model rewrite and the configured adaptor chain before marshaling once. Each adaptor implements `Apply(req *Request) error`; changes to request fields are forwarded, while the proxy manages provider credentials, content length, and hop-by-hop headers. The `minimax` adaptor injects `reasoning_split: true` into `/v1/chat/completions` when the client did not set the field, so thinking content is returned in `reasoning_content` / `reasoning_details`. Unknown adaptor names fail config validation at startup.
 
 `api_base_url` accepts a host or API path prefix such as `/v1`. Legacy full endpoint URLs are normalized to the requested endpoint. Legacy `transformer` configuration is ignored. Do not add protocol conversion, synthetic SSE events, provider-specific reasoning changes, or local token estimation.
 

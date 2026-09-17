@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agr/adaptor"
+
 	"github.com/spf13/viper"
 )
 
@@ -28,6 +30,8 @@ type Provider struct {
 	APIBaseURL string   `mapstructure:"api_base_url"`
 	APIKey     string   `mapstructure:"api_key"`
 	Models     []string `mapstructure:"models"`
+	// Adaptors 启用的请求适配器名称列表，例如 ["minimax"]。
+	Adaptors []string `mapstructure:"adaptors"`
 }
 
 // Load 加载并校验配置文件
@@ -99,6 +103,11 @@ func validate(cfg *Config) error {
 		}
 		if _, exists := providerMap[p.Name]; exists {
 			return fmt.Errorf("配置错误: providers.name 重复: %s", p.Name)
+		}
+		for _, name := range p.Adaptors {
+			if !adaptor.Known(name) {
+				return fmt.Errorf("配置错误: provider %s 引用了未知 adaptor: %s（可用: %s）", p.Name, name, strings.Join(adaptor.Names(), ", "))
+			}
 		}
 		providerMap[p.Name] = p
 	}
