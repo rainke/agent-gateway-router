@@ -69,8 +69,6 @@ api_base_url = "https://api.deepseek.com/v1"
 api_key = "sk-xxx"
 models = ["deepseek-chat"]
 
-[router]
-default = "deepseek,deepseek-chat"
 TOML
     echo "Created example config at ${CONFIG_FILE}"
     echo "Edit it with your API key before starting."
